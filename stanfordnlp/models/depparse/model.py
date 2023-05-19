@@ -16,7 +16,7 @@ class Parser(nn.Module):
 
         self.vocab = vocab
         self.args = args
-        self.share_hid = share_hid
+        self.share_hid = share_hid  # RMK: this seems to not have been used in this class (but in Tagger, yes).
         self.unsaved_modules = []
 
         def add_unsaved_module(name, module):
@@ -28,10 +28,10 @@ class Parser(nn.Module):
         if self.args['word_emb_dim'] > 0:
             # frequent word embeddings
             self.word_emb = nn.Embedding(len(vocab['word']), self.args['word_emb_dim'], padding_idx=0)
-            self.lemma_emb = nn.Embedding(len(vocab['lemma']), self.args['word_emb_dim'], padding_idx=0)
-            input_size += self.args['word_emb_dim'] * 2
+            self.lemma_emb = nn.Embedding(len(vocab['lemma']), self.args['word_emb_dim'], padding_idx=0)  # TODO delete this
+            input_size += self.args['word_emb_dim'] * 2  # TODO 1 cf line above
 
-        if self.args['tag_emb_dim'] > 0:
+        if self.args['tag_emb_dim'] > 0:  # TODO delete
             self.upos_emb = nn.Embedding(len(vocab['upos']), self.args['tag_emb_dim'], padding_idx=0)
 
             if not isinstance(vocab['xpos'], CompositeVocab):
@@ -49,7 +49,7 @@ class Parser(nn.Module):
 
             input_size += self.args['tag_emb_dim'] * 2
 
-        if self.args['char'] and self.args['char_emb_dim'] > 0:
+        if self.args['char'] and self.args['char_emb_dim'] > 0:  # TODO delete?
             self.charmodel = CharacterModel(args, vocab)
             self.trans_char = nn.Linear(self.args['char_hidden_dim'], self.args['transformed_dim'], bias=False)
             input_size += self.args['transformed_dim']
@@ -97,11 +97,11 @@ class Parser(nn.Module):
         if self.args['word_emb_dim'] > 0:
             word_emb = self.word_emb(word)
             word_emb = pack(word_emb)
-            lemma_emb = self.lemma_emb(lemma)
-            lemma_emb = pack(lemma_emb)
-            inputs += [word_emb, lemma_emb]
+            lemma_emb = self.lemma_emb(lemma)  # TODO
+            lemma_emb = pack(lemma_emb)  # TODO
+            inputs += [word_emb, lemma_emb]  # TODO
 
-        if self.args['tag_emb_dim'] > 0:
+        if self.args['tag_emb_dim'] > 0:  # TODO
             pos_emb = self.upos_emb(upos)
 
             if isinstance(self.vocab['xpos'], CompositeVocab):
@@ -118,7 +118,7 @@ class Parser(nn.Module):
 
             inputs += [pos_emb, feats_emb]
 
-        if self.args['char'] and self.args['char_emb_dim'] > 0:
+        if self.args['char'] and self.args['char_emb_dim'] > 0:  # TODO ?
             char_reps = self.charmodel(wordchars, wordchars_mask, word_orig_idx, sentlens, wordlens)
             char_reps = PackedSequence(self.trans_char(self.drop(char_reps.data)), char_reps.batch_sizes)
             inputs += [char_reps]
@@ -153,7 +153,7 @@ class Parser(nn.Module):
             dist_kld = -torch.log((dist_target.float() - dist_pred)**2/2 + 1)
             unlabeled_scores += dist_kld.detach()
 
-        diag = torch.eye(head.size(-1)+1, dtype=torch.uint8, device=head.device).unsqueeze(0)
+        diag = torch.eye(head.size(-1)+1, dtype=torch.bool, device=head.device).unsqueeze(0)
         unlabeled_scores.masked_fill_(diag, -float('inf'))
 
         preds = []

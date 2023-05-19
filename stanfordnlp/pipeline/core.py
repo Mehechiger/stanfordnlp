@@ -15,12 +15,13 @@ from stanfordnlp.pipeline.mwt_processor import MWTProcessor
 from stanfordnlp.pipeline.pos_processor import POSProcessor
 from stanfordnlp.pipeline.lemma_processor import LemmaProcessor
 from stanfordnlp.pipeline.depparse_processor import DepparseProcessor
+from stanfordnlp.pipeline.posdepparse_mt_processor import POSDepparseMTProcessor
 from stanfordnlp.utils.resources import DEFAULT_MODEL_DIR, default_treebanks, mwt_languages, build_default_config
 
 DEFAULT_PROCESSORS_LIST = f'{TOKENIZE},{MWT},{POS},{LEMMA},{DEPPARSE}'
 
 NAME_TO_PROCESSOR_CLASS = {TOKENIZE: TokenizeProcessor, MWT: MWTProcessor, POS: POSProcessor,
-                           LEMMA: LemmaProcessor, DEPPARSE: DepparseProcessor}
+                           LEMMA: LemmaProcessor, DEPPARSE: DepparseProcessor, POSDEPPARSEMT: POSDepparseMTProcessor}
 
 PIPELINE_SETTINGS = ['lang', 'shorthand', 'mode']
 
@@ -46,7 +47,13 @@ PROCESSOR_SETTINGS = {
                  'char_rec_dropout', 'composite_deep_biaff_hidden_dim', 'deep_biaff_hidden_dim', 'distance', 'dropout',
                  'eval_interval', 'hidden_dim', 'linearization', 'log_step', 'lr', 'max_grad_norm', 'max_steps',
                  'max_steps_before_stop', 'num_layers', 'optim', 'pretrain', 'rec_dropout', 'sample_train', 'seed',
-                 'shorthand', 'tag_emb_dim', 'transformed_dim', 'word_dropout', 'word_emb_dim', 'wordvec_dir']
+                 'shorthand', 'tag_emb_dim', 'transformed_dim', 'word_dropout', 'word_emb_dim', 'wordvec_dir'],
+    'posdepparse_mt': ['share_hid', 'wordvec_dir', 'rec_dropout', 'log_step', 'dropout', 'word_emb_dim',
+                       'eval_interval', 'hidden_dim', 'linearization', 'deep_biaff_hidden_dim', 'beta2',
+                       'char_num_layers', 'shorthand', 'char_rec_dropout', 'pretrain', 'lr', 'sample_train', 'optim',
+                       'composite_deep_biaff_hidden_dim', 'max_steps', 'batch_size', 'max_grad_norm', 'max_steps_before_stop',
+                       'adapt_eval_interval', 'seed', 'transformed_dim', 'char', 'char_hidden_dim', 'char_emb_dim',
+                       'num_layers', 'word_dropout', 'distance', 'tag_emb_dim'], # TODO
 }
 
 PROCESSOR_SETTINGS_LIST = \
@@ -55,7 +62,7 @@ PROCESSOR_SETTINGS_LIST = \
 BOOLEAN_PROCESSOR_SETTINGS = {
     TOKENIZE: ['pretokenized'],
     MWT: ['dict_only'],
-    LEMMA: ['dict_only', 'edit', 'ensemble_dict', 'pos', 'use_identity']
+    LEMMA: ['dict_only', 'edit', 'ensemble_dict', 'pos', 'use_identity'],
 }
 
 BOOLEAN_PROCESSOR_SETTINGS_LIST = \

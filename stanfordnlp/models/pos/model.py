@@ -30,7 +30,7 @@ class Tagger(nn.Module):
             self.word_emb = nn.Embedding(len(vocab['word']), self.args['word_emb_dim'], padding_idx=0)
             input_size += self.args['word_emb_dim']
 
-        if not share_hid:
+        if not share_hid:  # TODO: self.upos_emb seems to have been used in forward but not defined anywhere else, what should happen in the opposite case?
             # upos embeddings
             self.upos_emb = nn.Embedding(len(vocab['upos']), self.args['tag_emb_dim'], padding_idx=0)
 
@@ -51,12 +51,13 @@ class Tagger(nn.Module):
         self.taggerlstm_h_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
         self.taggerlstm_c_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
 
-        # classifiers
+        # classifiers  # TODO the classifier is Linear instead of Biaffine or DeepBiaffine. Further more, the tagger only uses Biaffine and not the deep version, try to understand why.
         self.upos_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['deep_biaff_hidden_dim'])
         self.upos_clf = nn.Linear(self.args['deep_biaff_hidden_dim'], len(vocab['upos']))
         self.upos_clf.weight.data.zero_()
         self.upos_clf.bias.data.zero_()
 
+        # TODO The following concerning xpos and ufeats should be removed (MTI not performing these)?
         if share_hid:
             clf_constructor = lambda insize, outsize: nn.Linear(insize, outsize)
         else:

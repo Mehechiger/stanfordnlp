@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Set environment variables for the training and testing of stanfordnlp modules.
 
 # Set UDBASE to the location of CoNLL18 folder 
 # For details, see http://universaldependencies.org/conll18/data.html
 # export UDBASE=/path/to/CoNLL18
+export UDBASE=./data/UD211
 
 # Set directories to store processed training/evaluation files
 export DATA_ROOT=./data
@@ -13,7 +14,9 @@ export MWT_DATA_DIR=$DATA_ROOT/mwt
 export LEMMA_DATA_DIR=$DATA_ROOT/lemma
 export POS_DATA_DIR=$DATA_ROOT/pos
 export DEPPARSE_DATA_DIR=$DATA_ROOT/depparse
+export POSDEPPARSEMT_DATA_DIR=$DATA_ROOT/posdepparsemt
 export ETE_DATA_DIR=$DATA_ROOT/ete
 
 # Set directories to store external word vector data
 export WORDVEC_DIR=./extern_data/word2vec
+export GLOVE_DIR=./extern_data/glove

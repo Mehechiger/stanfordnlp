@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Train and evaluate tokenizer. Run as:
 #   ./run_tokenize.sh TREEBANK OTHER_ARGS

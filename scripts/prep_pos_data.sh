@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Prepare data for training and evaluating taggers. Run as:
 #   ./prep_pos_data.sh TREEBANK

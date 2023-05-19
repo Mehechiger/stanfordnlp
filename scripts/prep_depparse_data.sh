@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Prepare data for training and evaluating parsers. Run as:
 #   ./prep_depparse_data.sh TREEBANK TAG_TYPE
@@ -53,7 +53,7 @@ elif [ $tag_type == 'predicted' ]; then
     echo $train_cmd
     echo ''
     eval $train_cmd
-    # run part-of-speech tagging on the train file
+    # run part-of-speech tagging on the dev file
     echo '---'
     echo 'running part of speech model to generate predicted tags for dev data'
     dev_cmd='python -m stanfordnlp.models.tagger --wordvec_dir '${WORDVEC_DIR}' --eval_file '${gold_dev_file}' --gold_file '${gold_dev_file}' --output_file '${dev_in_file}' --lang '${original_short}' --shorthand '${original_short}' --batch_size '${batch_size}' --mode predict'

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Prepare data for training and evaluating lemmatizers. Run as:
 #   ./prep_lemma_data.sh TREEBANK

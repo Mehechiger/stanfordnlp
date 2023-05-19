@@ -1,7 +1,6 @@
 from copy import copy
-from collections import Counter, OrderedDict
-import os
-import pickle
+from collections import OrderedDict
+from stanfordnlp.models.common.combined import NO_LABEL
 
 PAD = '<PAD>'
 PAD_ID = 0
@@ -12,6 +11,7 @@ EMPTY_ID = 2
 ROOT = '<ROOT>'
 ROOT_ID = 3
 VOCAB_PREFIX = [PAD, UNK, EMPTY, ROOT]
+
 
 class BaseVocab:
     """ A base class for common vocabulary operations. Each subclass should at least 
@@ -51,7 +51,12 @@ class BaseVocab:
             return unit.lower()
         return unit
 
+    def is_no_label(self, unit):
+        if self.lower: return unit.lower() == NO_LABEL.lower()
+        else: return unit == NO_LABEL
+
     def unit2id(self, unit):
+        assert not self.is_no_label(unit), f"Error: seeking {NO_LABEL} in {self.__name__} in which it shouldn't exist!"
         unit = self.normalize_unit(unit)
         if unit in self._unit2id:
             return self._unit2id[unit]
@@ -100,6 +105,7 @@ class CompositeVocab(BaseVocab):
     incoming value is not long enough.'''
 
     def __init__(self, data=None, lang="", idx=0, sep="", keyed=False):
+        raise NotImplementedError  # TODO NOLABEL/ignore if we're going to work on this.
         self.sep = sep
         self.keyed = keyed
         super().__init__(data, lang, idx=idx)

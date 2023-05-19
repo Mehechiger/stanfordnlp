@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Convert a UD Treebank full name to its short code (e.g. UD_English-EWT to en_ewt). Run as:
 #   ./treebank_to_shorthand.sh FORMAT TREEBANK

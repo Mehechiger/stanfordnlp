@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Prepare data for training and evaluating MWT expanders. Run as:
 #   ./prep_mwt_data.sh TREEBANK

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Train and evaluate parser. Run as:
 #   ./run_depparse.sh TREEBANK TAG_TYPE OTHER_ARGS

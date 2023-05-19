@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Train and evaluate MWT expander. Run as:
 #   ./run_mwt.sh TREEBANK OTHER_ARGS

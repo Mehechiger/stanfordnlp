@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Prepare data for training and evaluating tokenizers. Run as:
 #   ./prep_tokenize_data.sh TREEBANK DATASET

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Train and evaluate tagger. Run as:
 #   ./run_pos.sh TREEBANK OTHER_ARGS

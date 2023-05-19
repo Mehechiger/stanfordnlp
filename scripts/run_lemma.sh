@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Train and evaluate lemmatizer. Run as:
 #   ./run_lemma.sh TREEBANK OTHER_ARGS

@@ -1,4 +1,4 @@
-#/bin/bash
+#!/usr/bin/env bash
 #
 # Run an end-to-end evaluation of all trained modules. Run as:
 #   ./run_ete.sh TREEBANK SET

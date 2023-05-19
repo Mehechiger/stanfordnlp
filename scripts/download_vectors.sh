@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Download word vector files for all supported languages. Run as:
 #   ./download_vectors.sh WORDVEC_DIR

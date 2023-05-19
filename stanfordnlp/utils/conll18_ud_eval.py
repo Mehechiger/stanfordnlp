@@ -98,6 +98,8 @@ import sys
 import unicodedata
 import unittest
 
+from stanfordnlp.models.common.combined import NO_LABEL
+
 # CoNLL-U column names
 ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC = range(10)
 
@@ -164,8 +166,7 @@ def load_conllu(file):
             # List of references to UDWord instances representing functional-deprel children.
             self.functional_children = []
             # Only consider universal FEATS.
-            self.columns[FEATS] = "|".join(sorted(feat for feat in columns[FEATS].split("|")
-                                                  if feat.split("=", 1)[0] in UNIVERSAL_FEATURES))
+            self.columns[FEATS] = "|".join(sorted(feat for feat in columns[FEATS].split("|") if feat.split("=", 1)[0] in UNIVERSAL_FEATURES))
             # Let's ignore language-specific deprel subtypes.
             self.columns[DEPREL] = columns[DEPREL].split(":")[0]
             # Precompute which deprels are CONTENT_DEPRELS and which FUNCTIONAL_DEPRELS
@@ -178,6 +179,7 @@ def load_conllu(file):
     index, sentence_start = 0, None
     while True:
         line = file.readline()
+        assert NO_LABEL not in line, "This script should not be able to deal with incomplete annotations!!!"
         if not line:
             break
         line = _decode(line.rstrip("\r\n"))
@@ -463,12 +465,9 @@ def evaluate(gold_ud, system_ud):
         "LAS": alignment_score(alignment, lambda w, ga: (ga(w.parent), w.columns[DEPREL])),
         "CLAS": alignment_score(alignment, lambda w, ga: (ga(w.parent), w.columns[DEPREL]),
                                 filter_fn=lambda w: w.is_content_deprel),
-        "MLAS": alignment_score(alignment, lambda w, ga: (ga(w.parent), w.columns[DEPREL], w.columns[UPOS], w.columns[FEATS],
-                                                         [(ga(c), c.columns[DEPREL], c.columns[UPOS], c.columns[FEATS])
-                                                          for c in w.functional_children]),
+        "MLAS": alignment_score(alignment, lambda w, ga: (ga(w.parent), w.columns[DEPREL], w.columns[UPOS], w.columns[FEATS], [(ga(c), c.columns[DEPREL], c.columns[UPOS], c.columns[FEATS]) for c in w.functional_children]),
                                 filter_fn=lambda w: w.is_content_deprel),
-        "BLEX": alignment_score(alignment, lambda w, ga: (ga(w.parent), w.columns[DEPREL],
-                                                          w.columns[LEMMA] if ga(w).columns[LEMMA] != "_" else "_"),
+        "BLEX": alignment_score(alignment, lambda w, ga: (ga(w.parent), w.columns[DEPREL], w.columns[LEMMA] if ga(w).columns[LEMMA] != "_" else "_"),
                                 filter_fn=lambda w: w.is_content_deprel),
     }
 

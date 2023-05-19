@@ -4,6 +4,7 @@ Utility functions for data transformations.
 
 import torch
 
+from stanfordnlp.models.common.combined import NO_LABEL
 import stanfordnlp.models.common.seq2seq_constant as constant
 
 def map_to_ids(tokens, vocab):
@@ -19,6 +20,9 @@ def get_long_tensor(tokens_list, batch_size, pad_id=constant.PAD_ID):
         x = [z for y in x for z in y]
     tokens = torch.LongTensor(batch_size, *sizes).fill_(pad_id)
     for i, s in enumerate(tokens_list):
+        if NO_LABEL in s:  # Checks and fills all NO_LABEL with pad_id which will be masked out later.
+            for w in s: assert w == NO_LABEL
+            s = [pad_id, ] * len(s)
         tokens[i, :len(s)] = torch.LongTensor(s)
     return tokens
 

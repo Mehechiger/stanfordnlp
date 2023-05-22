@@ -27,6 +27,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='data/pos', help='Root dir for saving models.')
     parser.add_argument('--wordvec_dir', type=str, default='extern_data/word2vec', help='Directory of word vectors')
+    parser.add_argument('--glove_dir', type=str, default='extern_data/glove', help='Directory of GloVe vectors')
+    parser.add_argument('--pretrained_vec', type=str, default='glove', help='word2vec or glove')
+    parser.add_argument('--glove_B', type=str, default=6, help='GloVe pretraining number of words')
+    parser.add_argument('--glove_dim', type=str, default=100, help='GloVe vectors dim')
     parser.add_argument('--train_file', type=str, default=None, help='Input file for data loader.')
     parser.add_argument('--eval_file', type=str, default=None, help='Input file for data loader.')
     parser.add_argument('--output_file', type=str, default=None, help='Output CoNLL-U file.')
@@ -36,25 +40,21 @@ def parse_args():
     parser.add_argument('--lang', type=str, help='Language')
     parser.add_argument('--shorthand', type=str, help="Treebank shorthand")
 
-    parser.add_argument('--hidden_dim', type=int, default=200)
+    parser.add_argument('--hidden_dim', type=int, default=200)  # TODO 1* comme policy_maker? càd 512*nwf
+    parser.add_argument('--deep_biaff_hidden_dim', type=int, default=400)  # TODO 1* taille du classifieur (ici MLP), combien ?
     parser.add_argument('--char_hidden_dim', type=int, default=400)
-    parser.add_argument('--deep_biaff_hidden_dim', type=int, default=400)
-    parser.add_argument('--composite_deep_biaff_hidden_dim', type=int, default=100)
-    parser.add_argument('--word_emb_dim', type=int, default=75)
     parser.add_argument('--char_emb_dim', type=int, default=100)
-    parser.add_argument('--tag_emb_dim', type=int, default=50)
+    parser.add_argument('--fix_emb_dim', type=int, default=8)  # fix_embedding_size=8 in MTI
+    parser.add_argument('--char_type', default="fix", help="char(actor embeddings), (pre/suf)fix (embeddings) or deactivated")
     parser.add_argument('--transformed_dim', type=int, default=125)
-    parser.add_argument('--num_layers', type=int, default=2)
+    parser.add_argument('--num_layers', type=int, default=2)  # default ndf=2 in MTI; default in stanfordnlp: 3 from parser (2 for tagger)
     parser.add_argument('--char_num_layers', type=int, default=1)
     parser.add_argument('--pretrain_max_vocab', type=int, default=-1)
     parser.add_argument('--word_dropout', type=float, default=0.33)
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--rec_dropout', type=float, default=0, help="Recurrent dropout")
     parser.add_argument('--char_rec_dropout', type=float, default=0, help="Recurrent dropout")
-    parser.add_argument('--no_char', dest='char', action='store_false', help="Turn off character model.")
     parser.add_argument('--no_pretrain', dest='pretrain', action='store_false', help="Turn off pretrained embeddings.")
-    parser.add_argument('--share_hid', action='store_true', help="Share hidden representations for UPOS, XPOS and UFeats.")
-    parser.set_defaults(share_hid=False)
 
     parser.add_argument('--sample_train', type=float, default=1.0, help='Subsample training data.')
     parser.add_argument('--optim', type=str, default='adam', help='sgd, adagrad, adam or adamax.')
@@ -98,11 +98,16 @@ def main():
 
 def train(args):
     utils.ensure_dir(args['save_dir'])
-    model_file = args['save_dir'] + '/' + args['save_name'] if args['save_name'] is not None \
-            else '{}/{}_tagger.pt'.format(args['save_dir'], args['shorthand'])
+    model_file = args['save_dir'] + '/' + args['save_name'] if args['save_name'] is not None else '{}/{}_tagger.pt'.format(args['save_dir'], args['shorthand'])
 
     # load pretrained vectors
-    vec_file = utils.get_wordvec_file(args['wordvec_dir'], args['shorthand'])
+    if args["pretrained_vec"] == "word2vec":
+        vec_file = utils.get_wordvec_file(args['wordvec_dir'], args['shorthand'])
+    elif args["pretrained_vec"] == "glove":
+        assert args["shorthand"].split("_")[0] == "en"  # TODO currently the only supported language.
+        vec_file = utils.get_glove_file(args['glove_dir'], args['glove_B'], args['glove_dim'])
+    else:
+        raise NotImplementedError
     pretrain_file = '{}/{}.pretrain.pt'.format(args['save_dir'], args['shorthand'])
     pretrain = Pretrain(pretrain_file, vec_file, args['pretrain_max_vocab'])
 
@@ -149,8 +154,7 @@ def train(args):
             train_loss += loss
             if global_step % args['log_step'] == 0:
                 duration = time.time() - start_time
-                print(format_str.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), global_step,\
-                        max_steps, loss, duration, current_lr))
+                print(format_str.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), global_step, max_steps, loss, duration, current_lr))
 
             if global_step % args['eval_interval'] == 0:
                 # eval on dev
@@ -159,8 +163,8 @@ def train(args):
                 for batch in dev_batch:
                     preds = trainer.predict(batch)
                     dev_preds += preds
-                dev_batch.conll.set(['upos', 'xpos', 'feats'], [y for x in dev_preds for y in x])
-                dev_batch.conll.write_conll(system_pred_file)
+                dev_batch.combined.set_conll(['upos', ], [y for x in dev_preds for y in x])
+                dev_batch.combined.write_conll(system_pred_file)
                 _, _, dev_score = scorer.score(system_pred_file, gold_file)
 
                 train_loss = train_loss / args['eval_interval'] # avg loss per batch
@@ -204,8 +208,7 @@ def evaluate(args):
     # file paths
     system_pred_file = args['output_file']
     gold_file = args['gold_file']
-    model_file = args['save_dir'] + '/' + args['save_name'] if args['save_name'] is not None \
-            else '{}/{}_tagger.pt'.format(args['save_dir'], args['shorthand'])
+    model_file = args['save_dir'] + '/' + args['save_name'] if args['save_name'] is not None else '{}/{}_tagger.pt'.format(args['save_dir'], args['shorthand'])
     pretrain_file = '{}/{}.pretrain.pt'.format(args['save_dir'], args['shorthand'])
     
     # load pretrain
@@ -236,7 +239,7 @@ def evaluate(args):
         preds = []
 
     # write to file and score
-    batch.conll.set(['upos', 'xpos', 'feats'], [y for x in preds for y in x])
+    batch.conll.set(['upos', ], [y for x in preds for y in x])
     batch.conll.write_conll(system_pred_file)
 
     if gold_file is not None:

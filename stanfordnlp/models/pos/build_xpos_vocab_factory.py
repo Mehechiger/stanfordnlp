@@ -4,6 +4,7 @@ import sys
 from stanfordnlp.models.common.vocab import VOCAB_PREFIX
 from stanfordnlp.models.pos.vocab import XPOSVocab, WordVocab
 from stanfordnlp.models.common.conll import CoNLLFile
+raise NotImplementedError  # TODO not used
 
 if len(sys.argv) != 3:
     print('Usage: {} short_to_tb_file output_factory_file'.format(sys.argv[0]))

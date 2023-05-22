@@ -1,11 +1,12 @@
 import random
 import torch
 
+from stanfordnlp.models.common.combined import NO_LABEL
 from stanfordnlp.models.common.data import map_to_ids, get_long_tensor, get_float_tensor, sort_all
-from stanfordnlp.models.common import conll
+from stanfordnlp.models.common import conll, combined
+from stanfordnlp.models.common.utils import get_prefixes, get_suffixes
 from stanfordnlp.models.common.vocab import PAD_ID, VOCAB_PREFIX
-from stanfordnlp.models.pos.vocab import CharVocab, WordVocab, XPOSVocab, FeatureVocab, MultiVocab
-from stanfordnlp.models.pos.xpos_vocab_factory import xpos_vocab_factory
+from stanfordnlp.models.pos.vocab import (CharVocab, WordVocab, XPOSVocab, FeatureVocab, MultiVocab, PrefixVocab, SuffixVocab)
 from stanfordnlp.pipeline.doc import Document
 
 class DataLoader:
@@ -19,16 +20,17 @@ class DataLoader:
         # check if input source is a file or a Document object
         if isinstance(input_src, str):
             filename = input_src
-            assert filename.endswith('conllu'), "Loaded file must be conllu file."
-            self.conll, data = self.load_file(filename, evaluation=self.eval)
+            assert filename.endswith('combined'), "Loaded file must be combined file."
+            self.combined, data = self.load_file(filename, evaluation=self.eval)  # data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
         elif isinstance(input_src, Document):
+            raise NotImplementedError  #  TODO currently not supported.
             filename = None
             doc = input_src
             self.conll, data = self.load_doc(doc)
 
         # handle vocab
         if vocab is None:
-            self.vocab = self.init_vocab(data)
+            self.vocab = self.init_vocab([sent[:-2] for sent in data])  # sent: ['form', 'ptbpos', ]
         else:
             self.vocab = vocab
         self.pretrain_vocab = pretrain.vocab
@@ -39,6 +41,7 @@ class DataLoader:
             data = random.sample(data, keep)
             print("Subsample training set with rate {:g}".format(args['sample_train']))
 
+        # before: data: ['form', 'ptbpos', ], ..., has_tag
         data = self.preprocess(data, self.vocab, self.pretrain_vocab, args)
         # shuffle for training
         if self.shuffled:
@@ -50,29 +53,56 @@ class DataLoader:
         if filename is not None:
             print("{} batches created for {}.".format(len(self.data), filename))
 
+    # sent in data: ['form', 'ptbpos']
     def init_vocab(self, data):
         assert self.eval == False # for eval vocab must exist
-        charvocab = CharVocab(data, self.args['shorthand'])
+
+        multivocab_dict = {}
+        if self.args["char_type"] == "char":
+            charvocab = CharVocab(data, self.args['shorthand'])
+            multivocab_dict["char"] = charvocab
+        elif self.args["char_type"] == "fix":
+            prefixvocab = PrefixVocab(data, self.args['shorthand'])
+            suffixvocab = SuffixVocab(data, self.args['shorthand'])
+            multivocab_dict["prefix"] = prefixvocab
+            multivocab_dict["suffix"] = suffixvocab
+        elif self.args["char_type"] == "deactivated":
+            pass
+        else:
+            raise NotImplementedError
+
         wordvocab = WordVocab(data, self.args['shorthand'], cutoff=7, lower=True)
+        multivocab_dict["word"] = wordvocab
+
         uposvocab = WordVocab(data, self.args['shorthand'], idx=1)
-        xposvocab = xpos_vocab_factory(data, self.args['shorthand'])
-        featsvocab = FeatureVocab(data, self.args['shorthand'], idx=3)
-        vocab = MultiVocab({'char': charvocab,
-                            'word': wordvocab,
-                            'upos': uposvocab,
-                            'xpos': xposvocab,
-                            'feats': featsvocab})
+        multivocab_dict["upos"] = uposvocab
+
+        vocab = MultiVocab(multivocab_dict)
         return vocab
 
+    # data: ['form', 'ptbpos'], ..., has_tag
+    # Return: [word, char/(prefix, suffix), upos, pretrained]
     def preprocess(self, data, vocab, pretrain_vocab, args):
         processed = []
         for sent in data:
+            has_tag = sent[-1]
+            sent = sent[:-1]
             processed_sent = [vocab['word'].map([w[0] for w in sent])]
-            processed_sent += [[vocab['char'].map([x for x in w[0]]) for w in sent]]
-            processed_sent += [vocab['upos'].map([w[1] for w in sent])]
-            processed_sent += [vocab['xpos'].map([w[2] for w in sent])]
-            processed_sent += [vocab['feats'].map([w[3] for w in sent])]
-            processed_sent += [pretrain_vocab.map([w[0] for w in sent])]
+            if self.args["char_type"] == "char":
+                processed_sent += [[vocab['char'].map([x for x in w[0]]) for w in sent]]  # form
+            elif self.args["char_type"] == "fix":
+                prefixes = [vocab['prefix'].map([prefixes for prefixes in get_prefixes(w[0], 3)]) for w in sent]
+                suffixes = [vocab['suffix'].map([suffixes for suffixes in get_suffixes(w[0], 3)]) for w in sent]
+                processed_sent += [(prefixes, suffixes)]  # form
+            elif self.args["char_type"] == "deactivated":
+                processed_sent += [[None, ] * len(sent), ]
+            else:
+                raise NotImplementedError
+            if has_tag:
+                processed_sent += [vocab['upos'].map([w[1] for w in sent])]  # ptbpos
+            else:
+                processed_sent += [[NO_LABEL, ] * len(sent), ]
+            processed_sent += [pretrain_vocab.map([w[0] for w in sent])]  # form
             processed.append(processed_sent)
         return processed
 
@@ -85,10 +115,10 @@ class DataLoader:
             raise TypeError
         if key < 0 or key >= len(self.data):
             raise IndexError
-        batch = self.data[key]
+        batch = self.data[key]  # [word, char/(prefix, suffix), upos, pretrained]
         batch_size = len(batch)
         batch = list(zip(*batch))
-        assert len(batch) == 6
+        assert len(batch) == 4
 
         # sort sentences by lens for easy RNN operations
         lens = [len(x) for x in batch[0]]
@@ -105,26 +135,46 @@ class DataLoader:
         words = batch[0]
         words = get_long_tensor(words, batch_size)
         words_mask = torch.eq(words, PAD_ID)
-        wordchars = get_long_tensor(batch_words, len(word_lens))
-        wordchars_mask = torch.eq(wordchars, PAD_ID)
-
+        if self.args["char_type"] == "char":
+            wordchars = get_long_tensor(batch_words, len(word_lens))
+            wordchars_mask = torch.eq(wordchars, PAD_ID)
+        elif self.args["char_type"] == "fix":
+            prefixes, suffixes = zip(*batch[1])
+            wordchars = [get_long_tensor(prefixes, len(lens)), get_long_tensor(suffixes, len(lens))]
+            wordchars_mask = None  # not used
+        elif self.args["char_type"] == "deactivated":
+            wordchars = None
+            wordchars_mask = None
+        else:
+            raise NotImplementedError
         upos = get_long_tensor(batch[2], batch_size)
-        xpos = get_long_tensor(batch[3], batch_size)
-        ufeats = get_long_tensor(batch[4], batch_size)
-        pretrained = get_long_tensor(batch[5], batch_size)
+        pretrained = get_long_tensor(batch[3], batch_size)
         sentlens = [len(x) for x in batch[0]]
-        return words, words_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, orig_idx, word_orig_idx, sentlens, word_lens
+        return words, words_mask, wordchars, wordchars_mask, upos, pretrained, orig_idx, word_orig_idx, sentlens, word_lens
 
     def __iter__(self):
         for i in range(self.__len__()):
             yield self.__getitem__(i)
 
+    # data: ['form', 'ptbpos'], ..., has_tag
+    # evaluation: if True, does not load gold annotations
     def load_file(self, filename, evaluation=False):
-        conll_file = conll.CoNLLFile(filename)
-        data = conll_file.get(['word', 'upos', 'xpos', 'feats'], as_sentences=True)
-        return conll_file, data
+        # RMK: this is necessary since in their original design there are no gold annotations in the dev.in.conllu used for evaluation,
+        # but in our combined files gold annotations are always there.
+        if evaluation: excluded = ['ptbpos', ]
+        else: excluded = []
+        combined_file = combined.CombinedFile(filename, excluded=excluded)
+        data = combined_file.get(['form', 'ptbpos'], as_sentences=True)
+        for sent in data: # 1(ptbpos) could be NO_LABEL.
+            has_tag = True
+            if sent[0][1] == NO_LABEL:
+                for w in sent: assert w[1] == NO_LABEL
+                has_tag = False
+            sent += [has_tag, ]
+        return combined_file, data
 
     def load_doc(self, doc):
+        raise NotImplementedError  # TODO
         data = doc.conll_file.get(['word', 'upos', 'xpos', 'feats'], as_sentences=True)
         return doc.conll_file, data
 

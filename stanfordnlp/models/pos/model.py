@@ -2,21 +2,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence, pack_sequence, PackedSequence
+from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence, PackedSequence
 
-from stanfordnlp.models.common.biaffine import BiaffineScorer
+from stanfordnlp.models.common.combined import NO_LABEL
 from stanfordnlp.models.common.hlstm import HighwayLSTM
 from stanfordnlp.models.common.dropout import WordDropout
-from stanfordnlp.models.common.vocab import CompositeVocab
 from stanfordnlp.models.common.char_model import CharacterModel
 
 class Tagger(nn.Module):
-    def __init__(self, args, vocab, emb_matrix=None, share_hid=False):
+    def __init__(self, args, vocab, emb_matrix=None):
         super().__init__()
 
         self.vocab = vocab
         self.args = args
-        self.share_hid = share_hid
         self.unsaved_modules = []
 
         def add_unsaved_module(name, module):
@@ -25,21 +23,21 @@ class Tagger(nn.Module):
 
         # input layers
         input_size = 0
-        if self.args['word_emb_dim'] > 0:
-            # frequent word embeddings
-            self.word_emb = nn.Embedding(len(vocab['word']), self.args['word_emb_dim'], padding_idx=0)
-            input_size += self.args['word_emb_dim']
-
-        if not share_hid:  # TODO: self.upos_emb seems to have been used in forward but not defined anywhere else, what should happen in the opposite case?
-            # upos embeddings
-            self.upos_emb = nn.Embedding(len(vocab['upos']), self.args['tag_emb_dim'], padding_idx=0)
-
-        if self.args['char'] and self.args['char_emb_dim'] > 0:
+        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
             self.charmodel = CharacterModel(args, vocab)
             self.trans_char = nn.Linear(self.args['char_hidden_dim'], self.args['transformed_dim'], bias=False)
             input_size += self.args['transformed_dim']
+        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+            self.prefix_emb = nn.Embedding(len(vocab['prefix']), self.args['fix_emb_dim'], padding_idx=0)
+            self.suffix_emb = nn.Embedding(len(vocab['suffix']), self.args['fix_emb_dim'], padding_idx=0)
+            input_size += self.args['fix_emb_dim'] * 2
+        elif self.args['char_type'] == 'deactivated':
+            pass
+        else:
+            raise NotImplementedError
 
-        if self.args['pretrain']:    
+        # RMK: https://stanfordnlp.github.io/stanfordnlp/training.html#preparing-word-vector-data
+        if self.args['pretrain']:
             # pretrained embeddings, by default this won't be saved into model file
             add_unsaved_module('pretrained_emb', nn.Embedding.from_pretrained(torch.from_numpy(emb_matrix), freeze=True))
             self.trans_pretrained = nn.Linear(emb_matrix.shape[1], self.args['transformed_dim'], bias=False)
@@ -51,38 +49,11 @@ class Tagger(nn.Module):
         self.taggerlstm_h_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
         self.taggerlstm_c_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
 
-        # classifiers  # TODO the classifier is Linear instead of Biaffine or DeepBiaffine. Further more, the tagger only uses Biaffine and not the deep version, try to understand why.
+        # classifiers
         self.upos_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['deep_biaff_hidden_dim'])
         self.upos_clf = nn.Linear(self.args['deep_biaff_hidden_dim'], len(vocab['upos']))
         self.upos_clf.weight.data.zero_()
         self.upos_clf.bias.data.zero_()
-
-        # TODO The following concerning xpos and ufeats should be removed (MTI not performing these)?
-        if share_hid:
-            clf_constructor = lambda insize, outsize: nn.Linear(insize, outsize)
-        else:
-            self.xpos_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['deep_biaff_hidden_dim'] if not isinstance(vocab['xpos'], CompositeVocab) else self.args['composite_deep_biaff_hidden_dim'])
-            self.ufeats_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['composite_deep_biaff_hidden_dim'])
-            clf_constructor = lambda insize, outsize: BiaffineScorer(insize, self.args['tag_emb_dim'], outsize)
-
-        if isinstance(vocab['xpos'], CompositeVocab):
-            self.xpos_clf = nn.ModuleList()
-            for l in vocab['xpos'].lens():
-                self.xpos_clf.append(clf_constructor(self.args['composite_deep_biaff_hidden_dim'], l))
-        else:
-            self.xpos_clf = clf_constructor(self.args['deep_biaff_hidden_dim'], len(vocab['xpos']))
-            if share_hid:
-                self.xpos_clf.weight.data.zero_()
-                self.xpos_clf.bias.data.zero_()
-
-        self.ufeats_clf = nn.ModuleList()
-        for l in vocab['feats'].lens():
-            if share_hid:
-                self.ufeats_clf.append(clf_constructor(self.args['deep_biaff_hidden_dim'], l))
-                self.ufeats_clf[-1].weight.data.zero_()
-                self.ufeats_clf[-1].bias.data.zero_()
-            else:
-                self.ufeats_clf.append(clf_constructor(self.args['composite_deep_biaff_hidden_dim'], l))
 
         # criterion
         self.crit = nn.CrossEntropyLoss(ignore_index=0) # ignore padding
@@ -90,17 +61,12 @@ class Tagger(nn.Module):
         self.drop = nn.Dropout(args['dropout'])
         self.worddrop = WordDropout(args['word_dropout'])
 
-    def forward(self, word, word_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, word_orig_idx, sentlens, wordlens):
+    def forward(self, word, word_mask, wordchars, wordchars_mask, upos, pretrained, word_orig_idx, sentlens, wordlens):
         
         def pack(x):
             return pack_padded_sequence(x, sentlens, batch_first=True)
         
         inputs = []
-        if self.args['word_emb_dim'] > 0:
-            word_emb = self.word_emb(word)
-            word_emb = pack(word_emb)
-            inputs += [word_emb]
-
         if self.args['pretrain']:
             pretrained_emb = self.pretrained_emb(pretrained)
             pretrained_emb = self.trans_pretrained(pretrained_emb)
@@ -108,12 +74,24 @@ class Tagger(nn.Module):
             inputs += [pretrained_emb]
 
         def pad(x):
-            return pad_packed_sequence(PackedSequence(x, word_emb.batch_sizes), batch_first=True)[0]
+            return pad_packed_sequence(PackedSequence(x, pretrained_emb.batch_sizes), batch_first=True)[0]
 
-        if self.args['char'] and self.args['char_emb_dim'] > 0:
+        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
             char_reps = self.charmodel(wordchars, wordchars_mask, word_orig_idx, sentlens, wordlens)
             char_reps = PackedSequence(self.trans_char(self.drop(char_reps.data)), char_reps.batch_sizes)
             inputs += [char_reps]
+        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+            prefixes, suffixes = wordchars
+            prefix_reps = self.prefix_emb(prefixes).sum(dim=2)
+            prefix_reps = pack(self.drop(prefix_reps))
+            inputs += [prefix_reps]
+            suffix_reps = self.suffix_emb(suffixes).sum(dim=2)
+            suffix_reps = pack(self.drop(suffix_reps))
+            inputs += [suffix_reps]
+        elif self.args['char_type'] == 'deactivated':
+            pass
+        else:
+            raise NotImplementedError
 
         lstm_inputs = torch.cat([x.data for x in inputs], 1)
         lstm_inputs = self.worddrop(lstm_inputs, self.drop_replacement)
@@ -126,46 +104,15 @@ class Tagger(nn.Module):
         upos_hid = F.relu(self.upos_hid(self.drop(lstm_outputs)))
         upos_pred = self.upos_clf(self.drop(upos_hid))
 
-        preds = [pad(upos_pred).max(2)[1]]
-
-        upos = pack(upos).data
-        loss = self.crit(upos_pred.view(-1, upos_pred.size(-1)), upos.view(-1))
-
-        if self.share_hid:
-            xpos_hid = upos_hid
-            ufeats_hid = upos_hid
-
-            clffunc = lambda clf, hid: clf(self.drop(hid))
-        else:
-            xpos_hid = F.relu(self.xpos_hid(self.drop(lstm_outputs)))
-            ufeats_hid = F.relu(self.ufeats_hid(self.drop(lstm_outputs)))
-
-            if self.training:
-                upos_emb = self.upos_emb(upos)
+        if self.training:
+            preds = []
+            if upos == NO_LABEL:  # No available tagging supervision.
+                loss = 0
             else:
-                upos_emb = self.upos_emb(upos_pred.max(1)[1])
-
-            clffunc = lambda clf, hid: clf(self.drop(hid), self.drop(upos_emb))
-
-        xpos = pack(xpos).data
-        if isinstance(self.vocab['xpos'], CompositeVocab):
-            xpos_preds = []
-            for i in range(len(self.vocab['xpos'])):
-                xpos_pred = clffunc(self.xpos_clf[i], xpos_hid)
-                loss += self.crit(xpos_pred.view(-1, xpos_pred.size(-1)), xpos[:, i].view(-1))
-                xpos_preds.append(pad(xpos_pred).max(2, keepdim=True)[1])
-            preds.append(torch.cat(xpos_preds, 2))
+                upos = pack(upos).data
+                loss = self.crit(upos_pred.view(-1, upos_pred.size(-1)), upos.view(-1))
         else:
-            xpos_pred = clffunc(self.xpos_clf, xpos_hid)
-            loss += self.crit(xpos_pred.view(-1, xpos_pred.size(-1)), xpos.view(-1))
-            preds.append(pad(xpos_pred).max(2)[1])
-
-        ufeats_preds = []
-        ufeats = pack(ufeats).data
-        for i in range(len(self.vocab['feats'])):
-            ufeats_pred = clffunc(self.ufeats_clf[i], ufeats_hid)
-            loss += self.crit(ufeats_pred.view(-1, ufeats_pred.size(-1)), ufeats[:, i].view(-1))
-            ufeats_preds.append(pad(ufeats_pred).max(2, keepdim=True)[1])
-        preds.append(torch.cat(ufeats_preds, 2))
+            loss = 0
+            preds = [pad(upos_pred).max(2)[1]]
 
         return loss, preds

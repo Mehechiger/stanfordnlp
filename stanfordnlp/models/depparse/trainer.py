@@ -12,16 +12,17 @@ from stanfordnlp.models.common.chuliu_edmonds import chuliu_edmonds_one_root
 from stanfordnlp.models.depparse.model import Parser
 from stanfordnlp.models.pos.vocab import MultiVocab
 
+# batch: words, words_mask, wordchars/(prefixes, suffixes), wordchars_mask, upos, pretrained, head, deprel, orig_idx, word_orig_idx, sentlens, word_lens
 def unpack_batch(batch, use_cuda):
     """ Unpack a batch from the data loader. """
     if use_cuda:
-        inputs = [b.cuda() if b is not None else None for b in batch[:11]]
+        inputs = [(b[0].cuda(), b[1].cuda()) if type(b) == list else b.cuda() if b is not None else None for b in batch[:8]]  # :orig_idx
     else:
-        inputs = batch[:11]
-    orig_idx = batch[11]
-    word_orig_idx = batch[12]
-    sentlens = batch[13]
-    wordlens = batch[14]
+        inputs = batch[:8]  # :orig_idx
+    orig_idx = batch[8]  # orig_idx
+    word_orig_idx = batch[9]  # word_orig_idx
+    sentlens = batch[10]  # sentlens
+    wordlens = batch[11]  # word_lens
     return inputs, orig_idx, word_orig_idx, sentlens, wordlens
 
 class Trainer(BaseTrainer):
@@ -46,14 +47,14 @@ class Trainer(BaseTrainer):
 
     def update(self, batch, eval=False):
         inputs, orig_idx, word_orig_idx, sentlens, wordlens = unpack_batch(batch, self.use_cuda)
-        word, word_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, lemma, head, deprel = inputs
+        word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel = inputs
 
         if eval:
             self.model.eval()
         else:
             self.model.train()
             self.optimizer.zero_grad()
-        loss, _ = self.model(word, word_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, lemma, head, deprel, word_orig_idx, sentlens, wordlens)
+        loss, _ = self.model(word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens)
         loss_val = loss.data.item()
         if eval:
             return loss_val
@@ -65,11 +66,11 @@ class Trainer(BaseTrainer):
 
     def predict(self, batch, unsort=True):
         inputs, orig_idx, word_orig_idx, sentlens, wordlens = unpack_batch(batch, self.use_cuda)
-        word, word_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, lemma, head, deprel = inputs
+        word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel = inputs
 
         self.model.eval()
         batch_size = word.size(0)
-        _, preds = self.model(word, word_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, lemma, head, deprel, word_orig_idx, sentlens, wordlens)
+        _, preds = self.model(word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens)
         head_seqs = [chuliu_edmonds_one_root(adj[:l, :l])[1:] for adj, l in zip(preds[0], sentlens)] # remove attachment for the root
         deprel_seqs = [self.vocab['deprel'].unmap([preds[1][i][j+1][h] for j, h in enumerate(hs)]) for i, hs in enumerate(head_seqs)]
 

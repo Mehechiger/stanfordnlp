@@ -11,8 +11,8 @@ def score(system_conllu_file, gold_conllu_file, verbose=True):
     r = el.recall
     f = el.f1
     if verbose:
-        scores = [evaluation[k].f1 * 100 for k in ['LAS', 'MLAS', 'BLEX']]
-        print("LAS\tMLAS\tBLEX")
-        print("{:.2f}\t{:.2f}\t{:.2f}".format(*scores))
+        scores = [evaluation[k].f1 * 100 for k in ['LAS', ]]
+        print("LAS")
+        print("{:.2f}".format(*scores))
     return p, r, f
 

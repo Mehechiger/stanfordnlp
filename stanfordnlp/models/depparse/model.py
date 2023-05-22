@@ -5,18 +5,18 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence, pack_sequence, PackedSequence
 
 from stanfordnlp.models.common.biaffine import DeepBiaffineScorer
+from stanfordnlp.models.common.combined import NO_LABEL
 from stanfordnlp.models.common.hlstm import HighwayLSTM
 from stanfordnlp.models.common.dropout import WordDropout
 from stanfordnlp.models.common.vocab import CompositeVocab
 from stanfordnlp.models.common.char_model import CharacterModel
 
 class Parser(nn.Module):
-    def __init__(self, args, vocab, emb_matrix=None, share_hid=False):
+    def __init__(self, args, vocab, emb_matrix=None):
         super().__init__()
 
         self.vocab = vocab
         self.args = args
-        self.share_hid = share_hid  # RMK: this seems to not have been used in this class (but in Tagger, yes).
         self.unsaved_modules = []
 
         def add_unsaved_module(name, module):
@@ -25,35 +25,24 @@ class Parser(nn.Module):
 
         # input layers
         input_size = 0
-        if self.args['word_emb_dim'] > 0:
-            # frequent word embeddings
-            self.word_emb = nn.Embedding(len(vocab['word']), self.args['word_emb_dim'], padding_idx=0)
-            self.lemma_emb = nn.Embedding(len(vocab['lemma']), self.args['word_emb_dim'], padding_idx=0)  # TODO delete this
-            input_size += self.args['word_emb_dim'] * 2  # TODO 1 cf line above
-
-        if self.args['tag_emb_dim'] > 0:  # TODO delete
+        if self.args['tag_emb_dim'] > 0:
             self.upos_emb = nn.Embedding(len(vocab['upos']), self.args['tag_emb_dim'], padding_idx=0)
+            input_size += self.args['tag_emb_dim']
 
-            if not isinstance(vocab['xpos'], CompositeVocab):
-                self.xpos_emb = nn.Embedding(len(vocab['xpos']), self.args['tag_emb_dim'], padding_idx=0)
-            else:
-                self.xpos_emb = nn.ModuleList()
-
-                for l in vocab['xpos'].lens():
-                    self.xpos_emb.append(nn.Embedding(l, self.args['tag_emb_dim'], padding_idx=0))
-
-            self.ufeats_emb = nn.ModuleList()
-
-            for l in vocab['feats'].lens():
-                self.ufeats_emb.append(nn.Embedding(l, self.args['tag_emb_dim'], padding_idx=0))
-
-            input_size += self.args['tag_emb_dim'] * 2
-
-        if self.args['char'] and self.args['char_emb_dim'] > 0:  # TODO delete?
+        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
             self.charmodel = CharacterModel(args, vocab)
             self.trans_char = nn.Linear(self.args['char_hidden_dim'], self.args['transformed_dim'], bias=False)
             input_size += self.args['transformed_dim']
+        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+            self.prefix_emb = nn.Embedding(len(vocab['prefix']), self.args['fix_emb_dim'], padding_idx=0)
+            self.suffix_emb = nn.Embedding(len(vocab['suffix']), self.args['fix_emb_dim'], padding_idx=0)
+            input_size += self.args['fix_emb_dim'] * 2
+        elif self.args['char_type'] == 'deactivated':
+            pass
+        else:
+            raise NotImplementedError
 
+        # RMK: https://stanfordnlp.github.io/stanfordnlp/training.html#preparing-word-vector-data
         if self.args['pretrain']:
             # pretrained embeddings, by default this won't be saved into model file
             add_unsaved_module('pretrained_emb', nn.Embedding.from_pretrained(torch.from_numpy(emb_matrix), freeze=True))
@@ -80,7 +69,7 @@ class Parser(nn.Module):
         self.drop = nn.Dropout(args['dropout'])
         self.worddrop = WordDropout(args['word_dropout'])
 
-    def forward(self, word, word_mask, wordchars, wordchars_mask, upos, xpos, ufeats, pretrained, lemma, head, deprel, word_orig_idx, sentlens, wordlens):
+    def forward(self, word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens):
         def pack(x):
             return pack_padded_sequence(x, sentlens, batch_first=True)
 
@@ -94,34 +83,27 @@ class Parser(nn.Module):
         #def pad(x):
         #    return pad_packed_sequence(PackedSequence(x, pretrained_emb.batch_sizes), batch_first=True)[0]
 
-        if self.args['word_emb_dim'] > 0:
-            word_emb = self.word_emb(word)
-            word_emb = pack(word_emb)
-            lemma_emb = self.lemma_emb(lemma)  # TODO
-            lemma_emb = pack(lemma_emb)  # TODO
-            inputs += [word_emb, lemma_emb]  # TODO
-
-        if self.args['tag_emb_dim'] > 0:  # TODO
+        if self.args['tag_emb_dim'] > 0:
             pos_emb = self.upos_emb(upos)
-
-            if isinstance(self.vocab['xpos'], CompositeVocab):
-                for i in range(len(self.vocab['xpos'])):
-                    pos_emb += self.xpos_emb[i](xpos[:, :, i])
-            else:
-                pos_emb += self.xpos_emb(xpos)
             pos_emb = pack(pos_emb)
+            inputs += [pos_emb, ]
 
-            feats_emb = 0
-            for i in range(len(self.vocab['feats'])):
-                feats_emb += self.ufeats_emb[i](ufeats[:, :, i])
-            feats_emb = pack(feats_emb)
-
-            inputs += [pos_emb, feats_emb]
-
-        if self.args['char'] and self.args['char_emb_dim'] > 0:  # TODO ?
+        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
             char_reps = self.charmodel(wordchars, wordchars_mask, word_orig_idx, sentlens, wordlens)
             char_reps = PackedSequence(self.trans_char(self.drop(char_reps.data)), char_reps.batch_sizes)
             inputs += [char_reps]
+        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+            prefixes, suffixes = wordchars
+            prefix_reps = self.prefix_emb(prefixes).sum(dim=2)
+            prefix_reps = pack(self.drop(prefix_reps))
+            inputs += [prefix_reps]
+            suffix_reps = self.suffix_emb(suffixes).sum(dim=2)
+            suffix_reps = pack(self.drop(suffix_reps))
+            inputs += [suffix_reps]
+        elif self.args['char_type'] == 'deactivated':
+            pass
+        else:
+            raise NotImplementedError
 
         lstm_inputs = torch.cat([x.data for x in inputs], 1)
 
@@ -159,31 +141,35 @@ class Parser(nn.Module):
         preds = []
 
         if self.training:
-            unlabeled_scores = unlabeled_scores[:, 1:, :] # exclude attachment for the root symbol
-            unlabeled_scores = unlabeled_scores.masked_fill(word_mask.unsqueeze(1), -float('inf'))
-            unlabeled_target = head.masked_fill(word_mask[:, 1:], -1)
-            loss = self.crit(unlabeled_scores.contiguous().view(-1, unlabeled_scores.size(2)), unlabeled_target.view(-1))
+            if (head == NO_LABEL) or (deprel == NO_LABEL):  # No available parsing supervision.
+                assert (head == NO_LABEL) and (deprel == NO_LABEL)
+                loss = 0
+            else:
+                unlabeled_scores = unlabeled_scores[:, 1:, :] # exclude attachment for the root symbol
+                unlabeled_scores = unlabeled_scores.masked_fill(word_mask.unsqueeze(1), -float('inf'))
+                unlabeled_target = head.masked_fill(word_mask[:, 1:], -1)
+                loss = self.crit(unlabeled_scores.contiguous().view(-1, unlabeled_scores.size(2)), unlabeled_target.view(-1))
 
-            deprel_scores = deprel_scores[:, 1:] # exclude attachment for the root symbol
-            #deprel_scores = deprel_scores.masked_select(goldmask.unsqueeze(3)).view(-1, len(self.vocab['deprel']))
-            deprel_scores = torch.gather(deprel_scores, 2, head.unsqueeze(2).unsqueeze(3).expand(-1, -1, -1, len(self.vocab['deprel']))).view(-1, len(self.vocab['deprel']))
-            deprel_target = deprel.masked_fill(word_mask[:, 1:], -1)
-            loss += self.crit(deprel_scores.contiguous(), deprel_target.view(-1))
+                deprel_scores = deprel_scores[:, 1:] # exclude attachment for the root symbol
+                #deprel_scores = deprel_scores.masked_select(goldmask.unsqueeze(3)).view(-1, len(self.vocab['deprel']))
+                deprel_scores = torch.gather(deprel_scores, 2, head.unsqueeze(2).unsqueeze(3).expand(-1, -1, -1, len(self.vocab['deprel']))).view(-1, len(self.vocab['deprel']))
+                deprel_target = deprel.masked_fill(word_mask[:, 1:], -1)
+                loss += self.crit(deprel_scores.contiguous(), deprel_target.view(-1))
 
-            if self.args['linearization']:
-                #lin_scores = lin_scores[:, 1:].masked_select(goldmask)
-                lin_scores = torch.gather(lin_scores[:, 1:], 2, head.unsqueeze(2)).view(-1)
-                lin_scores = torch.cat([-lin_scores.unsqueeze(1)/2, lin_scores.unsqueeze(1)/2], 1)
-                #lin_target = (head_offset[:, 1:] > 0).long().masked_select(goldmask)
-                lin_target = torch.gather((head_offset[:, 1:] > 0).long(), 2, head.unsqueeze(2))
-                loss += self.crit(lin_scores.contiguous(), lin_target.view(-1))
+                if self.args['linearization']:
+                    #lin_scores = lin_scores[:, 1:].masked_select(goldmask)
+                    lin_scores = torch.gather(lin_scores[:, 1:], 2, head.unsqueeze(2)).view(-1)
+                    lin_scores = torch.cat([-lin_scores.unsqueeze(1)/2, lin_scores.unsqueeze(1)/2], 1)
+                    #lin_target = (head_offset[:, 1:] > 0).long().masked_select(goldmask)
+                    lin_target = torch.gather((head_offset[:, 1:] > 0).long(), 2, head.unsqueeze(2))
+                    loss += self.crit(lin_scores.contiguous(), lin_target.view(-1))
 
-            if self.args['distance']:
-                #dist_kld = dist_kld[:, 1:].masked_select(goldmask)
-                dist_kld = torch.gather(dist_kld[:, 1:], 2, head.unsqueeze(2))
-                loss -= dist_kld.sum()
+                if self.args['distance']:
+                    #dist_kld = dist_kld[:, 1:].masked_select(goldmask)
+                    dist_kld = torch.gather(dist_kld[:, 1:], 2, head.unsqueeze(2))
+                    loss -= dist_kld.sum()
 
-            loss /= wordchars.size(0) # number of words
+                loss /= word.size(0) # number of words
         else:
             loss = 0
             preds.append(F.log_softmax(unlabeled_scores, 2).detach().cpu().numpy())

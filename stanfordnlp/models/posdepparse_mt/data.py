@@ -3,10 +3,10 @@ import torch
 
 from stanfordnlp.models.common.data import map_to_ids, get_long_tensor, get_float_tensor, sort_all
 from stanfordnlp.models.common import combined
-from stanfordnlp.models.common.vocab import PAD_ID, VOCAB_PREFIX, ROOT_ID, CompositeVocab
+from stanfordnlp.models.common.vocab import PAD_ID, VOCAB_PREFIX, ROOT_ID
 from stanfordnlp.models.common.combined import NO_LABEL
-from stanfordnlp.models.pos.vocab import CharVocab, WordVocab, MultiVocab
-from stanfordnlp.models.pos.xpos_vocab_factory import xpos_vocab_factory
+from stanfordnlp.models.common.utils import get_prefixes, get_suffixes
+from stanfordnlp.models.pos.vocab import CharVocab, PrefixVocab, SuffixVocab, WordVocab, MultiVocab
 from stanfordnlp.pipeline.doc import Document
 
 
@@ -57,25 +57,51 @@ class DataLoader:
     # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel']
     def init_vocab(self, data):
         assert self.eval == False # for eval vocab must exist
-        charvocab = CharVocab(data, self.args['shorthand'])
+
+        multivocab_dict = {}
+        if self.args["char_type"] == "char":
+            charvocab = CharVocab(data, self.args['shorthand'])
+            multivocab_dict["char"] = charvocab
+        elif self.args["char_type"] == "fix":
+            prefixvocab = PrefixVocab(data, self.args['shorthand'])
+            suffixvocab = SuffixVocab(data, self.args['shorthand'])
+            multivocab_dict["prefix"] = prefixvocab
+            multivocab_dict["suffix"] = suffixvocab
+        elif self.args["char_type"] == "deactivated":
+            pass
+        else:
+            raise NotImplementedError
+
         wordvocab = WordVocab(data, self.args['shorthand'], cutoff=7, lower=True)
+        multivocab_dict["word"] = wordvocab
+
         uposvocab = WordVocab(data, self.args['shorthand'], idx=1)
+        multivocab_dict["upos"] = uposvocab
+
         deprelvocab = WordVocab(data, self.args['shorthand'], idx=3)
-        vocab = MultiVocab({'char': charvocab,
-                            'word': wordvocab,
-                            'upos': uposvocab,
-                            'deprel': deprelvocab})
+        multivocab_dict["deprel"] = deprelvocab
+
+        vocab = MultiVocab(multivocab_dict)
         return vocab
 
     # data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
-    # Return: [word, char, upos, pretrained, head, deprel]
+    # Return: [word, char/(prefix, suffix), upos, pretrained, head, deprel]
     def preprocess(self, data, vocab, pretrain_vocab, args):
         processed = []
         for sent in data:
             has_tag, has_syn = sent[-2:]
             sent = sent[:-2]
             processed_sent = [[ROOT_ID] + vocab['word'].map([w[0] for w in sent])]  # form
-            processed_sent += [[[ROOT_ID]] + [vocab['char'].map([x for x in w[0]]) for w in sent]]  # form
+            if self.args["char_type"] == "char":
+                processed_sent += [[[ROOT_ID]] + [vocab['char'].map([x for x in w[0]]) for w in sent]]  # form
+            elif self.args["char_type"] == "fix":
+                prefixes = [[ROOT_ID]] + [vocab['prefix'].map([prefixes for prefixes in get_prefixes(w[0], 3)]) for w in sent]
+                suffixes = [[ROOT_ID]] + [vocab['suffix'].map([suffixes for suffixes in get_suffixes(w[0], 3)]) for w in sent]
+                processed_sent += [(prefixes, suffixes)]  # form
+            elif self.args["char_type"] == "deactivated":
+                processed_sent += [[None, ] * (len(sent) + 1), ]
+            else:
+                raise NotImplementedError
             if has_tag:
                 processed_sent += [[ROOT_ID] + vocab['upos'].map([w[1] for w in sent])]  # ptbpos
             else:
@@ -98,7 +124,7 @@ class DataLoader:
             raise TypeError
         if key < 0 or key >= len(self.data):
             raise IndexError
-        batch = self.data[key]
+        batch = self.data[key]  # [word, char/(prefix, suffix), upos, pretrained, head, deprel]
         batch_size = len(batch)
         batch = list(zip(*batch))
         assert len(batch) == 6
@@ -118,9 +144,18 @@ class DataLoader:
         words = batch[0]
         words = get_long_tensor(words, batch_size)
         words_mask = torch.eq(words, PAD_ID)
-        wordchars = get_long_tensor(batch_words, len(word_lens))
-        wordchars_mask = torch.eq(wordchars, PAD_ID)
-
+        if self.args["char_type"] == "char":
+            wordchars = get_long_tensor(batch_words, len(word_lens))
+            wordchars_mask = torch.eq(wordchars, PAD_ID)
+        elif self.args["char_type"] == "fix":
+            prefixes, suffixes = zip(*batch[1])
+            wordchars = [get_long_tensor(prefixes, len(lens)), get_long_tensor(suffixes, len(lens))]
+            wordchars_mask = None  # not used
+        elif self.args["char_type"] == "deactivated":
+            wordchars = None
+            wordchars_mask = None
+        else:
+            raise NotImplementedError
         upos = get_long_tensor(batch[2], batch_size)
         pretrained = get_long_tensor(batch[3], batch_size)
         sentlens = [len(x) for x in batch[0]]

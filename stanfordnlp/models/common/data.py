@@ -23,7 +23,12 @@ def get_long_tensor(tokens_list, batch_size, pad_id=constant.PAD_ID):
         if NO_LABEL in s:  # Checks and fills all NO_LABEL with pad_id which will be masked out later.
             for w in s: assert w == NO_LABEL
             s = [pad_id, ] * len(s)
-        tokens[i, :len(s)] = torch.LongTensor(s)
+        if len(sizes) == 1:
+            tokens[i, :len(s)] = torch.LongTensor(s)
+        elif len(sizes) == 2:
+            for j, p in enumerate(s): tokens[i, j, :len(p)] = torch.LongTensor(p)
+        else:
+            raise NotImplementedError
     return tokens
 
 def get_float_tensor(features_list, batch_size):

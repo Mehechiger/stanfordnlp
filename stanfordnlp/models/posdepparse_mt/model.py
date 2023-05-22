@@ -12,12 +12,11 @@ from stanfordnlp.models.common.combined import NO_LABEL
 
 
 class MTTaggerParser(nn.Module):
-    def __init__(self, args, vocab, emb_matrix=None, share_hid=False):
+    def __init__(self, args, vocab, emb_matrix=None):
         super().__init__()
 
         self.vocab = vocab
         self.args = args
-        self.share_hid = share_hid
         self.unsaved_modules = []
 
         def add_unsaved_module(name, module):
@@ -26,12 +25,19 @@ class MTTaggerParser(nn.Module):
 
         # input layers
         input_size = 0
-        if self.args['char'] and self.args['char_emb_dim'] > 0:  # TODO 1* change to same as in MTI
+        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
             self.charmodel = CharacterModel(args, vocab)
             self.trans_char = nn.Linear(self.args['char_hidden_dim'], self.args['transformed_dim'], bias=False)
             input_size += self.args['transformed_dim']
+        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+            self.prefix_emb = nn.Embedding(len(vocab['prefix']), self.args['fix_emb_dim'], padding_idx=0)
+            self.suffix_emb = nn.Embedding(len(vocab['suffix']), self.args['fix_emb_dim'], padding_idx=0)
+            input_size += self.args['fix_emb_dim'] * 2
+        elif self.args['char_type'] == 'deactivated':
+            pass
+        else:
+            raise NotImplementedError
 
-        # TODO 1* use Glove
         # RMK: https://stanfordnlp.github.io/stanfordnlp/training.html#preparing-word-vector-data
         if self.args['pretrain']:
             # pretrained embeddings, by default this won't be saved into model file
@@ -46,7 +52,7 @@ class MTTaggerParser(nn.Module):
         self.lstm_h_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
         self.lstm_c_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
 
-        # classifiers  # TODO the classifier is Linear instead of Biaffine or DeepBiaffine. Further more, the tagger only uses Biaffine and not the deep version, try to understand why.
+        # classifiers
         self.upos_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['deep_biaff_hidden_dim'])
         self.upos_clf = nn.Linear(self.args['deep_biaff_hidden_dim'], len(vocab['upos']))
         self.upos_clf.weight.data.zero_()
@@ -80,15 +86,25 @@ class MTTaggerParser(nn.Module):
         def pad(x):
             return pad_packed_sequence(PackedSequence(x, pretrained_emb.batch_sizes), batch_first=True)[0]
 
-        if self.args['char'] and self.args['char_emb_dim'] > 0:
+        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
             char_reps = self.charmodel(wordchars, wordchars_mask, word_orig_idx, sentlens, wordlens)
             char_reps = PackedSequence(self.trans_char(self.drop(char_reps.data)), char_reps.batch_sizes)
             inputs += [char_reps]
+        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+            prefixes, suffixes = wordchars
+            prefix_reps = self.prefix_emb(prefixes).sum(dim=2)
+            prefix_reps = pack(self.drop(prefix_reps))
+            inputs += [prefix_reps]
+            suffix_reps = self.suffix_emb(suffixes).sum(dim=2)
+            suffix_reps = pack(self.drop(suffix_reps))
+            inputs += [suffix_reps]
+        elif self.args['char_type'] == 'deactivated':
+            pass
         else:
-            raise NotImplementedError  # We need it as our baseline.
+            raise NotImplementedError
 
         lstm_inputs = torch.cat([x.data for x in inputs], 1)
-        lstm_inputs = self.worddrop(lstm_inputs, self.drop_replacement)  # TODO est-ce qu'on garde le worddrop ?
+        lstm_inputs = self.worddrop(lstm_inputs, self.drop_replacement)
         lstm_inputs = self.drop(lstm_inputs)
         lstm_inputs = PackedSequence(lstm_inputs, inputs[0].batch_sizes)
 
@@ -164,7 +180,7 @@ class MTTaggerParser(nn.Module):
                     dist_kld = torch.gather(dist_kld[:, 1:], 2, head.unsqueeze(2))
                     parsing_loss -= dist_kld.sum()
 
-                parsing_loss /= wordchars.size(0) # number of words
+                parsing_loss /= word.size(0) # number of words
         else:
             parsing_loss = 0
             parsing_preds.append(F.log_softmax(unlabeled_scores, 2).detach().cpu().numpy())

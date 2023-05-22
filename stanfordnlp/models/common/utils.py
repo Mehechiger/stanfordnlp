@@ -12,6 +12,17 @@ from stanfordnlp.models.common.constant import lcode2lang
 import stanfordnlp.models.common.seq2seq_constant as constant
 import stanfordnlp.utils.conll18_ud_eval as ud_eval
 
+
+# Returns the list of all prefixes of length up to `max_length`
+def get_prefixes(word, max_length):
+    return [word[:i] for i in range(1, (1 + min(len(word), max_length)))]
+
+
+# Returns the list of all suffixes of length up to `max_length`
+def get_suffixes(word, max_length):
+    return [word[-i:] for i in range(1, (1 + min(len(word), max_length)))]
+
+
 # filenames
 def get_wordvec_file(wordvec_dir, shorthand):
     """ Lookup the name of the word vectors file, given a directory and the language shorthand.
@@ -20,8 +31,11 @@ def get_wordvec_file(wordvec_dir, shorthand):
     lang = lcode2lang[lcode] if lcode != 'no' else lcode2lang[shorthand]
     if lcode == 'zh':
         lang = 'ChineseT'
-    return os.path.join(wordvec_dir, lang, '{}.vectors.xz'.format(\
-            lcode if lcode != 'no' else (shorthand if shorthand != 'no_nynorsklia' else 'no_nynorsk')))
+    return os.path.join(wordvec_dir, lang, '{}.vectors.xz'.format(lcode if lcode != 'no' else (shorthand if shorthand != 'no_nynorsklia' else 'no_nynorsk')))
+
+# filenames
+def get_glove_file(glove_dir, glove_B, glove_dim):
+    return os.path.join(glove_dir, f'glove.{glove_B}B/glove.{glove_B}B.{glove_dim}d.txt')
 
 # training schedule
 def get_adaptive_eval_interval(cur_dev_size, thres_dev_size, base_interval):

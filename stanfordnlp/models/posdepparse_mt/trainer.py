@@ -12,11 +12,11 @@ from stanfordnlp.models.common.chuliu_edmonds import chuliu_edmonds_one_root
 from stanfordnlp.models.posdepparse_mt.model import MTTaggerParser
 from stanfordnlp.models.pos.vocab import MultiVocab
 
-# batch: words, words_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, orig_idx, word_orig_idx, sentlens, word_lens
+# batch: words, words_mask, wordchars/(prefixes, suffixes), wordchars_mask, upos, pretrained, head, deprel, orig_idx, word_orig_idx, sentlens, word_lens
 def unpack_batch(batch, use_cuda):
     """ Unpack a batch from the data loader. """
     if use_cuda:
-        inputs = [b.cuda() if b is not None else None for b in batch[:8]]  # :orig_idx
+        inputs = [(b[0].cuda(), b[1].cuda()) if type(b) == list else b.cuda() if b is not None else None for b in batch[:8]]  # :orig_idx
     else:
         inputs = batch[:8]  # :orig_idx
     orig_idx = batch[8]  # orig_idx
@@ -108,6 +108,6 @@ class Trainer(BaseTrainer):
             sys.exit(1)
         self.args = checkpoint['config']
         self.vocab = MultiVocab.load_state_dict(checkpoint['vocab'])
-        self.model = MTTaggerParser(self.args, self.vocab, emb_matrix=pretrain.emb, share_hid=self.args['share_hid'])  # TODO share_hid?
+        self.model = MTTaggerParser(self.args, self.vocab, emb_matrix=pretrain.emb)
         self.model.load_state_dict(checkpoint['model'], strict=False)
 

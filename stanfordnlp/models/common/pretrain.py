@@ -99,11 +99,30 @@ class Pretrain:
                     # the first line contains the number of word vectors and the dimensionality
                     first = False
                     line = line.strip().split(' ')
-                    rows, cols = [int(x) for x in line]
-                    emb = np.zeros((rows + len(VOCAB_PREFIX), cols), dtype=np.float32)
+                    if len(line) == 2:
+                        rows, cols = [int(x) for x in line]
+                        emb = np.zeros((rows + len(VOCAB_PREFIX), cols), dtype=np.float32)
+                    else:
+                        rows, cols = self.get_rows_cols(filename)
+                        emb = np.zeros((rows + len(VOCAB_PREFIX), cols), dtype=np.float32)
+                        # reads the first word
+                        emb[i + len(VOCAB_PREFIX) - 1 - failed, :] = [float(x) for x in line[-cols:]]
+                        words.append(' '.join(line[:-cols]))
                     continue
 
                 line = line.rstrip().split(' ')
                 emb[i+len(VOCAB_PREFIX)-1-failed, :] = [float(x) for x in line[-cols:]]
                 words.append(' '.join(line[:-cols]))
         return words, emb, failed
+
+    def get_rows_cols(self, filename):
+        with open(filename, 'r') as f:
+            rows = 0
+            cols = None
+            while True:
+                line = f.readline()
+                if not line: break
+                if cols is None: cols = len(line.split(" ")) - 1
+                else: assert cols == len(line.split(" ")) - 1, f"number of cols {len(line.split(' ')) - 1} differ from that of before this line: {cols}"
+                rows += 1
+        return rows, cols

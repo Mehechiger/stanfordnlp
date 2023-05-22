@@ -3,11 +3,31 @@ from collections import Counter, OrderedDict
 from stanfordnlp.models.common.vocab import BaseVocab, BaseMultiVocab
 from stanfordnlp.models.common.vocab import CompositeVocab, VOCAB_PREFIX, EMPTY, EMPTY_ID
 from stanfordnlp.models.common.combined import NO_LABEL
+from stanfordnlp.models.common.utils import get_prefixes, get_suffixes
 
 
 class CharVocab(BaseVocab):
     def build_vocab(self):
         counter = Counter([c for sent in self.data for w in sent for c in w[self.idx] if w[self.idx] != NO_LABEL])
+
+        self._id2unit = VOCAB_PREFIX + list(sorted(list(counter.keys()), key=lambda k: counter[k], reverse=True))
+        self._unit2id = {w:i for i, w in enumerate(self._id2unit)}
+
+        for unit in self._id2unit: assert not self.is_no_label(unit), f"Error: {NO_LABEL} found in {self.__name__} in which it shouldn't exist!"
+
+class PrefixVocab(BaseVocab):
+    def build_vocab(self):
+        counter = Counter([prefix for sent in self.data for w in sent for prefix in get_prefixes(w[self.idx], 3) if w[self.idx] != NO_LABEL])
+
+        self._id2unit = VOCAB_PREFIX + list(sorted(list(counter.keys()), key=lambda k: counter[k], reverse=True))
+        self._unit2id = {w:i for i, w in enumerate(self._id2unit)}
+
+        for unit in self._id2unit: assert not self.is_no_label(unit), f"Error: {NO_LABEL} found in {self.__name__} in which it shouldn't exist!"
+
+
+class SuffixVocab(BaseVocab):
+    def build_vocab(self):
+        counter = Counter([suffix for sent in self.data for w in sent for suffix in get_suffixes(w[self.idx], 3) if w[self.idx] != NO_LABEL])
 
         self._id2unit = VOCAB_PREFIX + list(sorted(list(counter.keys()), key=lambda k: counter[k], reverse=True))
         self._unit2id = {w:i for i, w in enumerate(self._id2unit)}

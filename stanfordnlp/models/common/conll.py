@@ -98,7 +98,7 @@ class CoNLLFile():
                 if '-' in ln[0]: # skip
                     continue
                 if len(field_idxs) == 1:
-                    cursent += [ln[field_idxs[0]]]
+                    cursent += [ln[field_idxs[0]]]  # TODO is this correct? cf. self.set
                 else:
                     cursent += [[ln[fid] for fid in field_idxs]]
 
@@ -122,7 +122,7 @@ class CoNLLFile():
                 if '-' in ln[0]:
                     continue
                 if len(field_idxs) == 1:
-                    ln[field_idxs[0]] = contents[cidx]
+                    ln[field_idxs[0]] = contents[cidx]  # TODO is this correct? cf. combined
                 else:
                     for fid, ct in zip(field_idxs, contents[cidx]):
                         ln[fid] = ct

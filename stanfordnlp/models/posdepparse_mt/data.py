@@ -22,7 +22,7 @@ class DataLoader:
         if isinstance(input_src, str):
             filename = input_src
             assert filename.endswith('combined'), "Loaded file must be combined file."
-            self.combined, data = self.load_file(filename, evaluation=self.eval)  # data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
+            self.combined, data = self.load_file(filename, evaluation=self.eval)  # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
         elif isinstance(input_src, Document):
             raise NotImplementedError  #  TODO currently not supported.
             filename = None
@@ -31,7 +31,7 @@ class DataLoader:
 
         # handle vocab
         if vocab is None:
-            self.vocab = self.init_vocab([sent[:-2] for sent in data])  # sent: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel']
+            self.vocab = self.init_vocab([sent[:-2] for sent in data])  # sent: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
         else:
             self.vocab = vocab
         self.pretrain_vocab = pretrain.vocab
@@ -84,7 +84,7 @@ class DataLoader:
         vocab = MultiVocab(multivocab_dict)
         return vocab
 
-    # data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
+    # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
     # Return: [word, char/(prefix, suffix), upos, pretrained, head, deprel]
     def preprocess(self, data, vocab, pretrain_vocab, args):
         processed = []

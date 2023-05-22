@@ -100,7 +100,7 @@ def main():
 
 def train(args):
     utils.ensure_dir(args['save_dir'])
-    model_file = args['save_dir'] + '/' + args['save_name'] if args['save_name'] is not None else '{}/{}_mt_taggerparser.pt'.format(args['save_dir'], args['shorthand'])
+    model_file = '{}/{}_{}_mt_taggerparser.pt'.format(args['save_dir'], args['save_name'], args['shorthand']) if args['save_name'] is not None else '{}/{}_mt_taggerparser.pt'.format(args['save_dir'], args['shorthand'])
 
     # load pretrained vectors
     if args["pretrained_vec"] == "word2vec":
@@ -110,7 +110,7 @@ def train(args):
         vec_file = utils.get_glove_file(args['glove_dir'], args['glove_B'], args['glove_dim'])
     else:
         raise NotImplementedError
-    pretrain_file = '{}/{}.pretrain.pt'.format(args['save_dir'], args['shorthand'])
+    pretrain_file = '{}/{}.pretrain.pt'.format(args['save_dir'], '{}_{}_mt_taggerparser'.format(args['save_name'], args['shorthand']) if args['save_name'] is not None else '{}_mt_taggerparser'.format(args['shorthand']))
     pretrain = Pretrain(pretrain_file, vec_file, args['pretrain_max_vocab'])
 
     # load data
@@ -213,9 +213,9 @@ def evaluate(args):
     # file paths
     system_pred_file = args['output_file']
     gold_file = args['gold_file']
-    model_file = args['save_dir'] + '/' + args['save_name'] if args['save_name'] is not None else '{}/{}_mt_taggerparser.pt'.format(args['save_dir'], args['shorthand'])
-    pretrain_file = '{}/{}.pretrain.pt'.format(args['save_dir'], args['shorthand'])
-    
+    model_file = args['save_dir'] + '/' + args['save_name']
+    pretrain_file = ".".join(model_file.split(".")[:-1]) + ".pretrain.pt"
+
     # load pretrain
     pretrain = Pretrain(pretrain_file)
 

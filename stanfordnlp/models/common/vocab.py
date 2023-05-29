@@ -55,10 +55,11 @@ class BaseVocab:
         if self.lower: return unit.lower() == NO_LABEL.lower()
         else: return unit == NO_LABEL
 
-    def unit2id(self, unit):
+    # if train_vocab is not None, all unit not in train_vocab will be seen as unk, cf. MTI.
+    def unit2id(self, unit, train_vocab=None):
         assert not self.is_no_label(unit), f"Error: seeking {NO_LABEL} in {self.__name__} in which it shouldn't exist!"
         unit = self.normalize_unit(unit)
-        if unit in self._unit2id:
+        if (unit in self._unit2id) and ((train_vocab is None) or ((train_vocab is not None) and (unit in train_vocab))):
             return self._unit2id[unit]
         else:
             return self._unit2id[UNK]
@@ -66,8 +67,9 @@ class BaseVocab:
     def id2unit(self, id):
         return self._id2unit[id]
 
-    def map(self, units):
-        return [self.unit2id(x) for x in units]
+    # if train_vocab is not None, all unit not in train_vocab will be seen as unk, cf. MTI.
+    def map(self, units, train_vocab=None):
+        return [self.unit2id(x, train_vocab=train_vocab) for x in units]
 
     def unmap(self, ids):
         return [self.id2unit(x) for x in ids]
@@ -128,7 +130,7 @@ class CompositeVocab(BaseVocab):
             parts = []
         return parts
 
-    def unit2id(self, unit):
+    def unit2id(self, unit):  # TODO train_vocab
         parts = self.unit2parts(unit)
         if self.keyed:
             # treat multi-valued properties as singletons

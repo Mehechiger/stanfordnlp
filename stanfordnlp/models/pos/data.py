@@ -10,12 +10,13 @@ from stanfordnlp.models.pos.vocab import (CharVocab, WordVocab, XPOSVocab, Featu
 from stanfordnlp.pipeline.doc import Document
 
 class DataLoader:
-    def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False):
+    def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False, pretrain_restrict_to_train_vocab=False):
         self.batch_size = batch_size
         self.args = args
         self.eval = evaluation
         self.shuffled = not self.eval
         self.sort_during_eval = sort_during_eval
+        self.pretrain_restrict_to_train_vocab = pretrain_restrict_to_train_vocab
 
         # check if input source is a file or a Document object
         if isinstance(input_src, str):
@@ -102,7 +103,7 @@ class DataLoader:
                 processed_sent += [vocab['upos'].map([w[1] for w in sent])]  # ptbpos
             else:
                 processed_sent += [[NO_LABEL, ] * len(sent), ]
-            processed_sent += [pretrain_vocab.map([w[0] for w in sent])]  # form
+            processed_sent += [pretrain_vocab.map([w[0] for w in sent], vocab if self.pretrain_restrict_to_train_vocab else None)]  # form
             processed.append(processed_sent)
         return processed
 

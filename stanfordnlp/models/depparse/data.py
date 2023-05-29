@@ -11,12 +11,13 @@ from stanfordnlp.pipeline.doc import Document
 
 
 class DataLoader:
-    def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False):
+    def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False, pretrain_restrict_to_train_vocab=False):
         self.batch_size = batch_size
         self.args = args
         self.eval = evaluation
         self.shuffled = not self.eval
         self.sort_during_eval = sort_during_eval
+        self.pretrain_restrict_to_train_vocab = pretrain_restrict_to_train_vocab
 
         # check if input source is a file or a Document object
         if isinstance(input_src, str):
@@ -106,7 +107,7 @@ class DataLoader:
                 processed_sent += [[ROOT_ID] + vocab['upos'].map([w[1] for w in sent])]  # ptbpos
             else:
                 processed_sent += [[NO_LABEL, ] * (len(sent) + 1), ]
-            processed_sent += [[ROOT_ID] + pretrain_vocab.map([w[0] for w in sent])]  # form
+            processed_sent += [[ROOT_ID] + pretrain_vocab.map([w[0] for w in sent], vocab if self.pretrain_restrict_to_train_vocab else None)]  # form
             if has_syn:
                 processed_sent += [[to_int(w[2], ignore_error=self.eval) for w in sent]]  # ptbhead
                 processed_sent += [vocab['deprel'].map([w[3] for w in sent])]  # ptbdeprel

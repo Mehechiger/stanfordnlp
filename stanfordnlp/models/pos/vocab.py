@@ -47,12 +47,13 @@ class WordVocab(BaseVocab):
         else:
             return super().id2unit(id)
 
-    def unit2id(self, unit):
+    # if train_vocab is not None, all unit not in train_vocab will be seen as unk, cf. MTI.
+    def unit2id(self, unit, train_vocab=None):
         assert not self.is_no_label(unit), f"Error: seeking {NO_LABEL} in {self.__name__} in which it shouldn't exist!"
         if len(self.ignore) > 0 and unit in self.ignore:
             return self._unit2id[EMPTY]
         else:
-            return super().unit2id(unit)
+            return super().unit2id(unit, train_vocab=train_vocab)
 
     def build_vocab(self):
         if self.lower:

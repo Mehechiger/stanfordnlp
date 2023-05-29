@@ -9,6 +9,10 @@ import torch
 from .vocab import BaseVocab, VOCAB_PREFIX
 
 class PretrainedWordVocab(BaseVocab):
+    def unit2id(self, unit, train_vocab=None):
+        if train_vocab is not None: train_vocab = train_vocab["word"]
+        return super().unit2id(unit, train_vocab=train_vocab)
+
     def build_vocab(self):
         self._id2unit = VOCAB_PREFIX + self.data
         self._unit2id = {w:i for i, w in enumerate(self._id2unit)}

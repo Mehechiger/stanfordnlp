@@ -119,7 +119,7 @@ class DataLoader:
         batch = self.data[key]  # [word, char/(prefix, suffix), upos, pretrained]
         batch_size = len(batch)
         batch = list(zip(*batch))
-        assert len(batch) == 4
+        assert len(batch) == 4, str(batch)
 
         # sort sentences by lens for easy RNN operations
         lens = [len(x) for x in batch[0]]

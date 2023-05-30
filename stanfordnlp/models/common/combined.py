@@ -35,7 +35,7 @@ class CombinedFile():
                         sents.append(cache)
                         cache = []
                 else:
-                    if line.startswith('#'): # skip comment line
+                    if line.startswith('#') and len(cache) == 0: # skip comment line
                         continue
                     array = line.split('\t')
                     cache += [array]
@@ -100,7 +100,7 @@ class CombinedFile():
         for sent in self.sents:
             cursent = []
             for ln in sent:
-                if '-' in ln[0]: # skip
+                if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: # skip
                     continue
                 if len(field_idxs) == 1:
                     cursent += [ln[field_idxs[0]]]  # TODO is this correct? cf. self.set
@@ -127,7 +127,7 @@ class CombinedFile():
         cidx = 0
         for sent in self.sents_conllu:
             for ln in sent:
-                if '-' in ln[0]: continue
+                if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: continue
                 for fid, ct in zip(field_idxs, contents[cidx]): ln[fid] = ct
                 cidx += 1
         return
@@ -159,7 +159,7 @@ class CombinedFile():
         with open(filename, 'w') as outfile:
             for sent in self.sents:
                 for ln in sent:
-                    if '-' not in ln[0]: # do not process if it is a mwt line
+                    if '-' not in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: # do not process if it is a mwt line
                         lm = lemmas[idx]
                         if len(lm) == 0:
                             lm = '_'
@@ -183,7 +183,7 @@ class CombinedFile():
                     # skip ellipsis
                     continue
 
-                if '-' in ln[0]:
+                if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]:
                     mwt_begin, mwt_end = [int(x) for x in ln[0].split('-')]
                     src = ln[word_idx]
                     continue

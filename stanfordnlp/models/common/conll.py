@@ -47,7 +47,7 @@ class CoNLLFile():
                         sents.append(cache)
                         cache = []
                 else:
-                    if line.startswith('#'): # skip comment line
+                    if line.startswith('#') and len(cache) == 0: # skip comment line
                         continue
                     array = line.split('\t')
                     if self.ignore_gapping and '.' in array[0]:

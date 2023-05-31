@@ -1,4 +1,5 @@
 import random
+import logging
 import torch
 
 from stanfordnlp.models.common.data import map_to_ids, get_long_tensor, get_float_tensor, sort_all
@@ -18,6 +19,8 @@ class DataLoader:
         self.shuffled = not self.eval
         self.sort_during_eval = sort_during_eval
         self.pretrain_restrict_to_train_vocab = pretrain_restrict_to_train_vocab
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
 
         # check if input source is a file or a Document object
         if isinstance(input_src, str):
@@ -41,7 +44,7 @@ class DataLoader:
         if args.get('sample_train', 1.0) < 1.0 and not self.eval:
             keep = int(args['sample_train'] * len(data))
             data = random.sample(data, keep)
-            print("Subsample training set with rate {:g}".format(args['sample_train']))
+            self.logger.info("Subsample training set with rate {:g}".format(args['sample_train']))
 
         # before: data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
         data = self.preprocess(data, self.vocab, self.pretrain_vocab, args)
@@ -53,7 +56,7 @@ class DataLoader:
         # chunk into batches
         self.data = self.chunk_batches(data)
         if filename is not None:
-            print("{} batches created for {}.".format(len(self.data), filename))
+            self.logger.info("{} batches created for {}.".format(len(self.data), filename))
 
     # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel']
     def init_vocab(self, data):

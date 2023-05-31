@@ -9,6 +9,7 @@ Training and evaluation for the mt_taggerparser.
 import sys
 import os
 import shutil
+import logging
 import time
 from datetime import datetime
 import argparse
@@ -102,6 +103,20 @@ def main():
 def train(args):
     utils.ensure_dir(args['save_dir'])
     model_file = '{}/{}_{}_mt_taggerparser.pt'.format(args['save_dir'], args['save_name'], args['shorthand']) if args['save_name'] is not None else '{}/{}_mt_taggerparser.pt'.format(args['save_dir'], args['shorthand'])
+    train_log_file = model_file + ".train.log"
+    logging.basicConfig(level=logging.DEBUG)
+    train_logger = logging.getLogger()
+    train_logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    file_handler = logging.FileHandler(train_log_file, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setFormatter(formatter)
+    train_logger.handlers = []
+    train_logger.addHandler(file_handler)
+    train_logger.addHandler(stream_handler)
 
     # load pretrained vectors
     if args["pretrained_vec"] == "word2vec":
@@ -115,7 +130,7 @@ def train(args):
     pretrain = Pretrain(pretrain_file, vec_file, args['pretrain_max_vocab'])
 
     # load data
-    print("Loading data with batch size {}...".format(args['batch_size']))
+    train_logger.info("Loading data with batch size {}...".format(args['batch_size']))
     train_batch = DataLoader(args['train_file'], args['batch_size'], args, pretrain, evaluation=False)
     vocab = train_batch.vocab
     dev_batch = DataLoader(args['eval_file'], args['batch_size'], args, pretrain, vocab=vocab, evaluation=True, pretrain_restrict_to_train_vocab=args['pretrain_restrict_to_train_vocab'])
@@ -126,10 +141,10 @@ def train(args):
 
     # skip training if the language does not have training or dev data
     if len(train_batch) == 0 or len(dev_batch) == 0:
-        print("Skip training because no data available...")
+        train_logger.error("Skip training because no data available...")
         sys.exit(0)
 
-    print("Training mt_taggerparser...")
+    train_logger.info("Training mt_taggerparser...")
     trainer = Trainer(args=args, vocab=vocab, pretrain=pretrain, use_cuda=args['cuda'])
 
     global_step = 0
@@ -142,7 +157,7 @@ def train(args):
 
     if args['adapt_eval_interval']:
         args['eval_interval'] = utils.get_adaptive_eval_interval(dev_batch.num_examples, 2000, args['eval_interval'])
-        print("Evaluating the model every {} steps...".format(args['eval_interval']))
+        train_logger.info("Evaluating the model every {} steps...".format(args['eval_interval']))
 
     using_amsgrad = False
     last_best_step = 0
@@ -157,11 +172,11 @@ def train(args):
             train_loss += loss
             if global_step % args['log_step'] == 0:
                 duration = time.time() - start_time
-                print(format_str.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), global_step, max_steps, loss, duration, current_lr))
+                train_logger.info(format_str.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), global_step, max_steps, loss, duration, current_lr))
 
             if global_step % args['eval_interval'] == 0:
                 # eval on dev
-                print("Evaluating on dev set...")
+                train_logger.info("Evaluating on dev set...")
                 dev_preds = []
                 for batch in dev_batch:
                     preds = trainer.predict(batch)
@@ -172,22 +187,22 @@ def train(args):
                 _, _, dev_score_parser, _, _, dev_score_tagger = scorer.score(system_pred_file, gold_file)
 
                 train_loss = train_loss / args['eval_interval'] # avg loss per batch
-                print("step {}: train_loss = {:.6f}, dev_score_parser = {:.4f}, dev_score_tagger = {:.4f}".format(global_step, train_loss, dev_score_parser, dev_score_tagger))
+                train_logger.info("step {}: train_loss = {:.6f}, dev_score_parser = {:.4f}, dev_score_tagger = {:.4f}".format(global_step, train_loss, dev_score_parser, dev_score_tagger))
                 train_loss = 0
 
                 # save best model # RMK based on parser score
                 if len(dev_score_history) == 0 or dev_score_parser > max(list(zip(*dev_score_history))[0]):
                     last_best_step = global_step
                     trainer.save(model_file)
-                    print("new best model saved.")
+                    train_logger.info("new best model saved.")
                     best_dev_preds = dev_preds
 
                 dev_score_history += [(dev_score_parser, dev_score_tagger)]
-                print("")
+                train_logger.info("")
 
             if global_step - last_best_step >= args['max_steps_before_stop']:
                 if not using_amsgrad:
-                    print("Switching to AMSGrad")
+                    train_logger.info("Switching to AMSGrad")
                     last_best_step = global_step
                     using_amsgrad = True
                     trainer.optimizer = optim.Adam(trainer.model.parameters(), amsgrad=True, lr=args['lr'], betas=(.9, args['beta2']), eps=1e-6)
@@ -203,15 +218,14 @@ def train(args):
 
         train_batch.reshuffle()
 
-    print("Training ended with {} steps.".format(global_step))
-
     best_eval_parser_ind, best_eval_tagger_ind = np.argmax(list(zip(*dev_score_history)), axis=1)
     best_eval_parser = best_eval_parser_ind + 1
     best_eval_tagger = best_eval_tagger_ind + 1
     best_f_parser, best_f_parser_on_tagging = dev_score_history[best_eval_parser_ind]
     best_f_tagger, best_f_tagger_on_parsing = dev_score_history[best_eval_tagger_ind]
-    print("Best dev F1 parser = {:.2f}, at iteration = {}, on tagging = {:.2f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
-    print("Best dev F1 tagger = {:.2f}, at iteration = {}, on parsing = {:.2f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
+    train_logger.info("Training ended with {} steps.".format(global_step))
+    train_logger.info("Best dev F1 parser = {:.2f}, at iteration = {}, on tagging = {:.2f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
+    train_logger.info("Best dev F1 tagger = {:.2f}, at iteration = {}, on parsing = {:.2f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
 
 def evaluate(args):
     # file paths
@@ -219,12 +233,26 @@ def evaluate(args):
     gold_file = args['gold_file']
     model_file = args['save_dir'] + '/' + args['save_name']
     pretrain_file = ".".join(model_file.split(".")[:-1]) + ".pretrain.pt"
+    eval_log_file = model_file + ".eval.log"
+    logging.basicConfig(level=logging.DEBUG)
+    eval_logger = logging.getLogger()
+    eval_logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    file_handler = logging.FileHandler(eval_log_file, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setFormatter(formatter)
+    eval_logger.handlers = []
+    eval_logger.addHandler(file_handler)
+    eval_logger.addHandler(stream_handler)
 
     # load pretrain
     pretrain = Pretrain(pretrain_file)
 
     # load model
-    print("Loading model from: {}".format(model_file))
+    eval_logger.info("Loading model from: {}".format(model_file))
     use_cuda = args['cuda'] and not args['cpu']
     trainer = Trainer(pretrain=pretrain, model_file=model_file, use_cuda=use_cuda)
     loaded_args, vocab = trainer.args, trainer.vocab
@@ -235,11 +263,11 @@ def evaluate(args):
             loaded_args[k] = args[k]
 
     # load data
-    print("Loading data with batch size {}...".format(args['batch_size']))
+    eval_logger.info("Loading data with batch size {}...".format(args['batch_size']))
     batch = DataLoader(args['eval_file'], args['batch_size'], loaded_args, pretrain, vocab=vocab, evaluation=True, pretrain_restrict_to_train_vocab=args['pretrain_restrict_to_train_vocab'])
 
     if len(batch) > 0:
-        print("Start evaluation...")
+        eval_logger.info("Start evaluation...")
         preds = []
         for i, b in enumerate(batch):
             preds += trainer.predict(b)
@@ -254,9 +282,9 @@ def evaluate(args):
     if gold_file is not None:
         _, _, score_parser, _, _, score_tagger = scorer.score(system_pred_file, gold_file)
 
-        print("MT_TaggerParser score:")
-        print("parser {} {:.2f}".format(args['shorthand'], score_parser*100))
-        print("tagger {} {:.2f}".format(args['shorthand'], score_tagger*100))
+        eval_logger.info(f"MT_TaggerParser {args['save_name']} score:")
+        eval_logger.info("parser {} {:.2f}".format(args['shorthand'], score_parser*100))
+        eval_logger.info("tagger {} {:.2f}".format(args['shorthand'], score_tagger*100))
 
 if __name__ == '__main__':
     main()

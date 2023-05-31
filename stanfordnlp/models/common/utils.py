@@ -2,6 +2,7 @@
 Utility functions.
 """
 import os
+import logging
 from collections import Counter
 import random
 import json
@@ -11,6 +12,9 @@ import torch
 from stanfordnlp.models.common.constant import lcode2lang
 import stanfordnlp.models.common.seq2seq_constant as constant
 import stanfordnlp.utils.conll18_ud_eval as ud_eval
+
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
 
 
 # Returns the list of all prefixes of length up to `max_length`
@@ -108,28 +112,28 @@ def keep_partial_grad(grad, topk):
 def ensure_dir(d, verbose=True):
     if not os.path.exists(d):
         if verbose:
-            print("Directory {} do not exist; creating...".format(d))
+            logger.debug("Directory {} do not exist; creating...".format(d))
         os.makedirs(d)
 
 def save_config(config, path, verbose=True):
     with open(path, 'w') as outfile:
         json.dump(config, outfile, indent=2)
     if verbose:
-        print("Config saved to file {}".format(path))
+        logger.debug("Config saved to file {}".format(path))
     return config
 
 def load_config(path, verbose=True):
     with open(path) as f:
         config = json.load(f)
     if verbose:
-        print("Config loaded from file {}".format(path))
+        logger.debug("Config loaded from file {}".format(path))
     return config
 
 def print_config(config):
     info = "Running with the following configs:\n"
     for k,v in config.items():
         info += "\t{} : {}\n".format(k, str(v))
-    print("\n" + info + "\n")
+    logger.info("\n" + info + "\n")
     return
 
 def normalize_text(text):

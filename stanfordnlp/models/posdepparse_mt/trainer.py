@@ -3,6 +3,7 @@ A trainer class to handle training and testing of models.
 """
 
 import sys
+import logging
 import torch
 from torch import nn
 
@@ -46,11 +47,14 @@ class Trainer(BaseTrainer):
             self.model.cpu()
         self.optimizer = utils.get_optimizer(self.args['optim'], self.parameters, self.args['lr'], betas=(0.9, self.args['beta2']), eps=1e-6)
 
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+
         # https://wandb.ai/wandb_fc/tips/reports/How-to-Calculate-Number-of-Model-Parameters-for-PyTorch-and-Tensorflow-Models--VmlldzoyMDYyNzIx
         total_params = sum(param.numel() for param in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        print(f"Total number of parameters: {total_params}")
-        print(f"Number of trainable parameters: {trainable_params}")
+        self.logger.info(f"Total number of parameters: {total_params}")
+        self.logger.info(f"Number of trainable parameters: {trainable_params}")
 
     def update(self, batch, eval=False):
         inputs, orig_idx, word_orig_idx, sentlens, wordlens = unpack_batch(batch, self.use_cuda)
@@ -102,15 +106,15 @@ class Trainer(BaseTrainer):
                 }
         try:
             torch.save(params, filename)
-            print("model saved to {}".format(filename))
+            self.logger.info("model saved to {}".format(filename))
         except BaseException:
-            print("[Warning: Saving failed... continuing anyway.]")
+            self.logger.warning("[Warning: Saving failed... continuing anyway.]")
 
     def load(self, pretrain, filename):
         try:
             checkpoint = torch.load(filename, lambda storage, loc: storage)
         except BaseException:
-            print("Cannot load model from {}".format(filename))
+            self.logger.error("Cannot load model from {}".format(filename))
             sys.exit(1)
         self.args = checkpoint['config']
         self.vocab = MultiVocab.load_state_dict(checkpoint['vocab'])

@@ -205,10 +205,13 @@ def train(args):
 
     print("Training ended with {} steps.".format(global_step))
 
-    best_f_parser, best_eval_parser = max(list(zip(*dev_score_history))[0])*100, np.argmax(list(zip(*dev_score_history))[0])+1
-    best_f_tagger, best_eval_tagger = max(list(zip(*dev_score_history))[1])*100, np.argmax(list(zip(*dev_score_history))[1])+1
-    print("Best dev F1 parser = {:.2f}, at iteration = {}".format(best_f_parser, best_eval_parser * args['eval_interval']))
-    print("Best dev F1 tagger = {:.2f}, at iteration = {}".format(best_f_tagger, best_eval_tagger * args['eval_interval']))
+    best_eval_parser_ind, best_eval_tagger_ind = np.argmax(list(zip(*dev_score_history)), axis=1)
+    best_eval_parser = best_eval_parser_ind + 1
+    best_eval_tagger = best_eval_tagger_ind + 1
+    best_f_parser, best_f_parser_on_tagging = dev_score_history[best_eval_parser_ind]
+    best_f_tagger, best_f_tagger_on_parsing = dev_score_history[best_eval_tagger_ind]
+    print("Best dev F1 parser = {:.2f}, at iteration = {}, on tagging = {:.2f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
+    print("Best dev F1 tagger = {:.2f}, at iteration = {}, on parsing = {:.2f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
 
 def evaluate(args):
     # file paths

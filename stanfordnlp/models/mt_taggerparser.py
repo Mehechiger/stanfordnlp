@@ -41,9 +41,9 @@ def parse_args():
     parser.add_argument('--lang', type=str, help='Language')
     parser.add_argument('--shorthand', type=str, help="Treebank shorthand")
 
-    parser.add_argument('--hidden_dim', type=int, default=400)  # TODO 1* comme policy_maker? càd 512*nwf
+    parser.add_argument('--hidden_dim', type=int, default=400)
     parser.add_argument('--char_hidden_dim', type=int, default=400)
-    parser.add_argument('--deep_biaff_hidden_dim', type=int, default=400)  # TODO 1* taille du classifieur (ici DBiaff), combien ?
+    parser.add_argument('--deep_biaff_hidden_dim', type=int, default=400)
     parser.add_argument('--char_emb_dim', type=int, default=100)
     parser.add_argument('--fix_emb_dim', type=int, default=8)  # fix_embedding_size=8 in MTI
     parser.add_argument('--char_type', default="fix", help="char(actor embeddings), (pre/suf)fix (embeddings) or deactivated")

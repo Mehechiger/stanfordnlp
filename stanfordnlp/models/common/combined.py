@@ -103,7 +103,7 @@ class CombinedFile():
                 if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: # skip
                     continue
                 if len(field_idxs) == 1:
-                    cursent += [ln[field_idxs[0]]]  # TODO is this correct? cf. self.set
+                    cursent += [ln[field_idxs[0]]]
                 else:
                     cursent += [[ln[fid] for fid in field_idxs]]
 

@@ -222,10 +222,10 @@ def train(args):
     best_eval_parser = best_eval_parser_ind + 1
     best_eval_tagger = best_eval_tagger_ind + 1
     best_f_parser, best_f_parser_on_tagging = dev_score_history[best_eval_parser_ind]
-    best_f_tagger, best_f_tagger_on_parsing = dev_score_history[best_eval_tagger_ind]
+    best_f_tagger_on_parsing, best_f_tagger = dev_score_history[best_eval_tagger_ind]
     train_logger.info("Training ended with {} steps.".format(global_step))
-    train_logger.info("Best dev F1 parser = {:.2f}, at iteration = {}, on tagging = {:.2f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
-    train_logger.info("Best dev F1 tagger = {:.2f}, at iteration = {}, on parsing = {:.2f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
+    train_logger.info("Best dev F1 parser = {:.4f}, at iteration = {}, on tagging = {:.4f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
+    train_logger.info("Best dev F1 tagger = {:.4f}, at iteration = {}, on parsing = {:.4f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
 
 def evaluate(args):
     # file paths

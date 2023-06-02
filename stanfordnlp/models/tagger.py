@@ -215,9 +215,9 @@ def train(args):
 
         train_batch.reshuffle()
 
-    best_f, best_eval = max(dev_score_history)*100, np.argmax(dev_score_history)+1
+    best_f, best_eval = dev_score_history, np.argmax(dev_score_history)+1
     train_logger.info("Training ended with {} steps.".format(global_step))
-    train_logger.info("Best dev F1 = {:.2f}, at iteration = {}".format(best_f, best_eval * args['eval_interval']))
+    train_logger.info("Best dev F1 = {:.4f}, at iteration = {}".format(best_f, best_eval * args['eval_interval']))
 
 def evaluate(args):
     # file paths

@@ -23,6 +23,8 @@ from stanfordnlp.models.posdepparse_mt.trainer import Trainer
 from stanfordnlp.models.posdepparse_mt import scorer
 from stanfordnlp.models.common import utils
 from stanfordnlp.models.common.pretrain import Pretrain
+from stanfordnlp.models.hyperparameter_search import lr_search
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -45,13 +47,13 @@ def parse_args():
     parser.add_argument('--char_hidden_dim', type=int, default=400)
     parser.add_argument('--deep_biaff_hidden_dim', type=int, default=400)
     parser.add_argument('--char_emb_dim', type=int, default=100)
-    parser.add_argument('--fix_emb_dim', type=int, default=8)  # fix_embedding_size=8 in MTI
+    parser.add_argument('--fix_emb_dim', type=int, default=32)  # fix_embedding_size=8 in MTI  # RMK 32 seems better for this model
     parser.add_argument('--char_type', default="fix", help="char(actor embeddings), (pre/suf)fix (embeddings) or deactivated")
     parser.add_argument('--transformed_dim', type=int, default=125)
     parser.add_argument('--num_layers', type=int, default=2)  # default ndf=2 in MTI; default in stanfordnlp: 3 from parser (2 for tagger)
     parser.add_argument('--char_num_layers', type=int, default=1)
     parser.add_argument('--pretrain_max_vocab', type=int, default=-1)
-    parser.add_argument('--pretrain_restrict_to_train_vocab', action='store_true')  # whether filtering out vocabs not seen in train, like in MTI
+    parser.add_argument('--pretrain_restrict_to_train_vocab', action='store_true')  # whether filtering out vocabs not seen in train, like in MTI  # RMK makes no difference in practice
     parser.add_argument('--word_dropout', type=float, default=0.33)
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--rec_dropout', type=float, default=0, help="Recurrent dropout")
@@ -78,8 +80,12 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=1234)
     parser.add_argument('--cuda', type=bool, default=torch.cuda.is_available())
     parser.add_argument('--cpu', action='store_true', help='Ignore CUDA.')
+
+    parser.add_argument('--search_lr', action='store_true', help='Searches (bayesian) best lr (ignores --lr; will be ignored if --mode is predict).')
+
     args = parser.parse_args()
     return args
+
 
 def main():
     args = parse_args()
@@ -96,18 +102,37 @@ def main():
     print("Running tagger-parser in {} mode".format(args['mode']))
 
     if args['mode'] == 'train':
-        train(args)
+        if args["search_lr"]:
+            return search_lr(args)
+        else:
+            return train(args)
     else:
-        evaluate(args)
+        return evaluate(args)
+
+
+def _search_lr_aux_train_func(lr, args, q):
+    args["lr"] = lr
+    now = datetime.now().strftime("%y%m%d%H%M%S%f")
+    args["save_name"] = f"lr_search_{now}"
+    args["output_file"] = f"lr_search_{now}.conllu"
+    res = train(args)
+    q.put(((res[0][0], res), lr))
+
+
+def search_lr(args):
+    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=4, num_searches=20)
+
 
 def train(args):
     utils.ensure_dir(args['save_dir'])
     model_file = '{}/{}_{}_mt_taggerparser.pt'.format(args['save_dir'], args['save_name'], args['shorthand']) if args['save_name'] is not None else '{}/{}_mt_taggerparser.pt'.format(args['save_dir'], args['shorthand'])
+
+    # Handles logging
     train_log_file = model_file + ".train.log"
     logging.basicConfig(level=logging.DEBUG)
     train_logger = logging.getLogger()
     train_logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    formatter = logging.Formatter(f'%(levelname)s - {args["save_name"]} - %(message)s')
     file_handler = logging.FileHandler(train_log_file, mode='w', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -118,7 +143,7 @@ def train(args):
     train_logger.addHandler(file_handler)
     train_logger.addHandler(stream_handler)
 
-    # load pretrained vectors
+    # load pretrained vectors  # TODO 1\* use the same prept
     if args["pretrained_vec"] == "word2vec":
         vec_file = utils.get_wordvec_file(args['wordvec_dir'], args['shorthand'])
     elif args["pretrained_vec"] == "glove":
@@ -227,12 +252,17 @@ def train(args):
     train_logger.info("Best dev F1 parser = {:.4f}, at iteration = {}, on tagging = {:.4f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
     train_logger.info("Best dev F1 tagger = {:.4f}, at iteration = {}, on parsing = {:.4f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
 
+    return (best_f_parser, best_f_parser_on_tagging, best_eval_parser), (best_f_tagger, best_f_tagger_on_parsing, best_eval_tagger)
+
+
 def evaluate(args):
     # file paths
     system_pred_file = args['output_file']
     gold_file = args['gold_file']
     model_file = args['save_dir'] + '/' + args['save_name']
     pretrain_file = ".".join(model_file.split(".")[:-1]) + ".pretrain.pt"
+
+    # Handles logging
     eval_log_file = model_file + ".eval.log"
     logging.basicConfig(level=logging.DEBUG)
     eval_logger = logging.getLogger()
@@ -283,8 +313,14 @@ def evaluate(args):
         _, _, score_parser, _, _, score_tagger = scorer.score(system_pred_file, gold_file)
 
         eval_logger.info(f"MT_TaggerParser {args['save_name']} score:")
-        eval_logger.info("parser {} {:.2f}".format(args['shorthand'], score_parser*100))
-        eval_logger.info("tagger {} {:.2f}".format(args['shorthand'], score_tagger*100))
+        eval_logger.info("parser {} {:.4f}".format(args['shorthand'], score_parser))
+        eval_logger.info("tagger {} {:.4f}".format(args['shorthand'], score_tagger))
+    else:
+        score_parser = None
+        score_tagger = None
+
+    return (score_parser, score_tagger), preds
+
 
 if __name__ == '__main__':
     main()

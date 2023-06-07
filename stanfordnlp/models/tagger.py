@@ -24,6 +24,7 @@ from stanfordnlp.models.pos import scorer
 from stanfordnlp.models.common import utils
 from stanfordnlp.models.common.pretrain import Pretrain
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='data/pos', help='Root dir for saving models.')
@@ -79,6 +80,7 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+
 def main():
     args = parse_args()
 
@@ -94,18 +96,21 @@ def main():
     print("Running tagger in {} mode".format(args['mode']))
 
     if args['mode'] == 'train':
-        train(args)
+        return train(args)
     else:
-        evaluate(args)
+        return evaluate(args)
+
 
 def train(args):
     utils.ensure_dir(args['save_dir'])
     model_file = '{}/{}_{}_tagger.pt'.format(args['save_dir'], args['save_name'], args['shorthand']) if args['save_name'] is not None else '{}/{}_tagger.pt'.format(args['save_dir'], args['shorthand'])
+
+    # Handles logging
     train_log_file = model_file + ".train.log"
     logging.basicConfig(level=logging.DEBUG)
     train_logger = logging.getLogger()
     train_logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    formatter = logging.Formatter(f'%(levelname)s - {args["save_name"]} - %(message)s')
     file_handler = logging.FileHandler(train_log_file, mode='w', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -124,7 +129,7 @@ def train(args):
         vec_file = utils.get_glove_file(args['glove_dir'], args['glove_B'], args['glove_dim'])
     else:
         raise NotImplementedError
-    pretrain_file = '{}/{}.pretrain.pt'.format(args['save_dir'], '{}_{}_tagger'.format(args['save_name'], args['shorthand']) if args['save_name'] is not None else '{}_tagger'.format(args['shorthand']))
+    pretrain_file = f"{args['save_dir']}/glove.{args['glove_B']}B.{args['glove_dim']}d.{args['train_file'].split('/')[-1]}.pretrain.pt"
     pretrain = Pretrain(pretrain_file, vec_file, args['pretrain_max_vocab'])
 
     # load data
@@ -219,12 +224,17 @@ def train(args):
     train_logger.info("Training ended with {} steps.".format(global_step))
     train_logger.info("Best dev F1 = {:.4f}, at iteration = {}".format(best_f, best_eval * args['eval_interval']))
 
+    return best_f, best_eval
+
+
 def evaluate(args):
     # file paths
     system_pred_file = args['output_file']
     gold_file = args['gold_file']
     model_file = args['save_dir'] + '/' + args['save_name']
-    pretrain_file = ".".join(model_file.split(".")[:-1]) + ".pretrain.pt"
+    pretrain_file = f"{args['save_dir']}/glove.{args['glove_B']}B.{args['glove_dim']}d.{args['train_file'].split('/')[-1]}.pretrain.pt"
+
+    # Handles logging
     eval_log_file = model_file + ".eval.log"
     logging.basicConfig(level=logging.DEBUG)
     eval_logger = logging.getLogger()
@@ -275,9 +285,14 @@ def evaluate(args):
         _, _, score = scorer.score(system_pred_file, gold_file)
 
         eval_log = f"Tagger {args['save_name']} score:\n"
-        eval_log += "{} {:.2f}".format(args['shorthand'], score*100)
+        eval_log += "{} {:.4f}".format(args['shorthand'], score)
         eval_logger.info(eval_log)
         with open(eval_log_file, 'w') as f: f.write(eval_log)
+    else:
+        score = None
+
+    return score, preds
+
 
 if __name__ == '__main__':
     main()

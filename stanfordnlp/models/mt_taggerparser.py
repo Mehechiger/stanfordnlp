@@ -96,7 +96,7 @@ def main():
         random.seed(args.seed)
     if args.cpu:
         args.cuda = False
-    elif args.cuda:
+    elif args.cuda and args.seed is not None:
         torch.cuda.manual_seed(args.seed)
 
     args = vars(args)

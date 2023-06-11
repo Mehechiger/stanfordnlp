@@ -84,7 +84,7 @@ def parse_args():
     parser.add_argument('--search_lr', action='store_true', help='Searches (bayesian) best lr (ignores --lr; will be ignored if --mode is predict).')
 
     parser.add_argument('-tlcs', '--training_label_complementing_strategy', type=str, help='in case of underspecification experiments, the strategy used to complement missing labels', default=None, choices=[None, "bootstrap"])
-    parser.add_argument('-tlcgo', '--training_label_complementing_gold_observed', help='in case of underspecification experiments and when label complementing strategies are used, whether the completion process sees available gold labels', action='store_true')
+    #parser.add_argument('-tlcgo', '--training_label_complementing_gold_observed', help='in case of underspecification experiments and when label complementing strategies are used, whether the completion process sees available gold labels', action='store_true')  # TODO 1\*
 
     args = parser.parse_args()
     return args
@@ -124,7 +124,7 @@ def _search_lr_aux_train_func(lr, args, q):
 
 
 def search_lr(args):
-    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=4, num_searches=20)
+    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=1, num_searches=20)
 
 
 def train(args):
@@ -147,7 +147,6 @@ def train(args):
     train_logger.addHandler(file_handler)
     train_logger.addHandler(stream_handler)
 
-    # load pretrained vectors  # TODO 1\* use the same prept
     if args["pretrained_vec"] == "word2vec":
         vec_file = utils.get_wordvec_file(args['wordvec_dir'], args['shorthand'])
     elif args["pretrained_vec"] == "glove":

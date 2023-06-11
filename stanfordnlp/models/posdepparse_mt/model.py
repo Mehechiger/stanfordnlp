@@ -113,8 +113,9 @@ class MTTaggerParser(nn.Module):
         # Tagging
         lstm_outputs_tagger = lstm_outputs.data
 
-        upos_hid = F.relu(self.upos_hid(self.drop(lstm_outputs_tagger)))
-        upos_pred = self.upos_clf(self.drop(upos_hid))
+        if not (self.training and (upos == NO_LABEL)):  # Saves time when we do not need to calculate the loss nor the preds (i.e. training but with no available supervision).
+            upos_hid = F.relu(self.upos_hid(self.drop(lstm_outputs_tagger)))
+            upos_pred = self.upos_clf(self.drop(upos_hid))
 
         if self.training:
             tagging_preds = []
@@ -130,25 +131,26 @@ class MTTaggerParser(nn.Module):
         # Parsing
         lstm_outputs, _ = pad_packed_sequence(lstm_outputs, batch_first=True)
 
-        unlabeled_scores = self.unlabeled(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
-        deprel_scores = self.deprel(self.drop(lstm_outputs), self.drop(lstm_outputs))
+        if not (self.training and ((head == NO_LABEL) or (deprel == NO_LABEL))):  # Saves time when we do not need to calculate the loss nor the preds (i.e. training but with no available supervision).
+            unlabeled_scores = self.unlabeled(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
+            deprel_scores = self.deprel(self.drop(lstm_outputs), self.drop(lstm_outputs))
 
-        if self.args['linearization'] or self.args['distance']:
-            head_offset = torch.arange(word.size(1), device=head.device).view(1, 1, -1).expand(word.size(0), -1, -1) - torch.arange(word.size(1), device=head.device).view(1, -1, 1).expand(word.size(0), -1, -1)
+            if self.args['linearization'] or self.args['distance']:
+                head_offset = torch.arange(word.size(1), device=head.device).view(1, 1, -1).expand(word.size(0), -1, -1) - torch.arange(word.size(1), device=head.device).view(1, -1, 1).expand(word.size(0), -1, -1)
 
-        if self.args['linearization']:
-            lin_scores = self.linearization(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
-            unlabeled_scores += F.logsigmoid(lin_scores * torch.sign(head_offset).float()).detach()
+            if self.args['linearization']:
+                lin_scores = self.linearization(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
+                unlabeled_scores += F.logsigmoid(lin_scores * torch.sign(head_offset).float()).detach()
 
-        if self.args['distance']:
-            dist_scores = self.distance(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
-            dist_pred = 1 + F.softplus(dist_scores)
-            dist_target = torch.abs(head_offset)
-            dist_kld = -torch.log((dist_target.float() - dist_pred)**2/2 + 1)
-            unlabeled_scores += dist_kld.detach()
+            if self.args['distance']:
+                dist_scores = self.distance(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
+                dist_pred = 1 + F.softplus(dist_scores)
+                dist_target = torch.abs(head_offset)
+                dist_kld = -torch.log((dist_target.float() - dist_pred)**2/2 + 1)
+                unlabeled_scores += dist_kld.detach()
 
-        diag = torch.eye(head.size(-1)+1, dtype=torch.bool, device=head.device).unsqueeze(0)
-        unlabeled_scores.masked_fill_(diag, -float('inf'))
+            diag = torch.eye(head.size(-1)+1, dtype=torch.bool, device=head.device).unsqueeze(0)
+            unlabeled_scores.masked_fill_(diag, -float('inf'))
 
         parsing_preds = []
         if self.training:

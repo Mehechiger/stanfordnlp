@@ -64,6 +64,7 @@ def lr_search(f, args, lower, upper, prior="log-uniform", parallel=4, num_search
                     num_completed_searches += 1
 
     max_i = np.argmax(optimizer.yi)
-    best_lr, best_main_perf, best_perfs = optimizer.Xi[max_i], optimizer.yi[max_i], all_evaluated_perfs[max_i]
-    print("Search ended. Best lr %s, main perf %s, perfs\n%s" % (best_lr, best_main_perf, best_perfs))
+    all_lrs = list(zip(optimizer.Xi, optimizer.yi, all_evaluated_perfs))
+    best_lr, best_main_perf, best_perfs = all_lrs[max_i]
+    print("Search ended.\nAll evaluated lrs\n%s\n\nBest lr %s, main perf %s, perfs\n%s" % (all_lrs, best_lr, best_main_perf, best_perfs))
     return best_lr, best_main_perf, best_perfs

@@ -70,6 +70,11 @@ class CombinedFile():
                 self._sents_conllu.append(sent_conllu)
         return self._sents_conllu
 
+    @property
+    def sents_complemented(self):
+        if not hasattr(self, '_sents_complemented'): self._sents_complemented = self.load_combined()
+        return self._sents
+
     def __len__(self):
         return len(self.sents)
 
@@ -80,12 +85,12 @@ class CombinedFile():
             n = 0
             for sent in self.sents:
                 for ln in sent:
-                    if '-' not in ln[0]:
+                    if (ln[0] in ["-LRB-", "-RRB-"]) or ('-' not in ln[0]):
                         n += 1
             self._num_words = n
         return self._num_words
 
-    def get(self, fields, as_sentences=False):
+    def get(self, fields, as_sentences=False, complemented=False):
         """ Get fields from a list of field names. If only one field name is provided, return a list
         of that field; if more than one, return a list of list. Note that all returned fields are after
         multi-word expansion.
@@ -97,7 +102,8 @@ class CombinedFile():
         assert "sdl_start" not in fields, "Currently not supported!"  # TODO
         field_idxs = [COMBINED_FIELD_TO_IDX[f.lower()] for f in fields]
         results = []
-        for sent in self.sents:
+        sents = self.sents_complemented if complemented else self.sents
+        for sent in sents:
             cursent = []
             for ln in sent:
                 if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: # skip
@@ -132,6 +138,30 @@ class CombinedFile():
                 cidx += 1
         return
 
+    def set_complemented_combined(self, fields, contents):
+        """ Set fields based on contents. If only one field (singleton list) is provided, then a list of content will be expected; otherwise a list of list of contents will be expected.
+        CAREFUL: This overwrites NO_LABEL only.
+        """
+        assert isinstance(fields, list), "Must provide field names as a list."
+        assert isinstance(contents, list), "Must provide contents as a list (one item per line)."
+        assert len(fields) >= 1, "Must have at least one field."
+        assert "topflag" not in fields, "Currently not supported!"  # TODO
+        assert "pred" not in fields, "Currently not supported!"  # TODO
+        assert "sdl_start" not in fields, "Currently not supported!"  # TODO
+        assert self.num_words == len(contents), "Contents must have the same number as the original file."
+
+        if hasattr(self, "_sents_complemented"): delattr(self, "_sents_complemented")
+
+        field_idxs = [COMBINED_FIELD_TO_IDX[CONLL_FIELD_TO_COMBINED_FIELD[f.lower()]] for f in fields]
+        cidx = 0
+        for sent in self.sents_complemented:
+            for ln in sent:
+                if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: continue
+                for fid, ct in zip(field_idxs, contents[cidx]):
+                    if ln[fid] == NO_LABEL: ln[fid] = ct
+                cidx += 1
+        return
+
     def write_conll(self, filename):
         """ Write current conll contents to file.
         """
@@ -159,7 +189,7 @@ class CombinedFile():
         with open(filename, 'w') as outfile:
             for sent in self.sents:
                 for ln in sent:
-                    if '-' not in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]: # do not process if it is a mwt line
+                    if '-' not in ln[0]: # do not process if it is a mwt line
                         lm = lemmas[idx]
                         if len(lm) == 0:
                             lm = '_'
@@ -183,7 +213,7 @@ class CombinedFile():
                     # skip ellipsis
                     continue
 
-                if '-' in ln[0] and ln[0] not in ["-LRB-", "-RRB-"]:
+                if '-' in ln[0]:
                     mwt_begin, mwt_end = [int(x) for x in ln[0].split('-')]
                     src = ln[word_idx]
                     continue

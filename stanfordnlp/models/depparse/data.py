@@ -11,6 +11,22 @@ from stanfordnlp.models.pos.vocab import CharVocab, PrefixVocab, SuffixVocab, Wo
 from stanfordnlp.pipeline.doc import Document
 
 
+def check_annots(data):
+    for sent in data:  # 1(ptbpos) or 2(ptbhead)+3(ptbdeprel) could be NO_LABEL.
+        has_tag = True
+        has_syn = True
+        if sent[0][1] == NO_LABEL:
+            for w in sent:
+                assert w[1] == NO_LABEL and w[2] != NO_LABEL and w[3] != NO_LABEL
+            has_tag = False
+        elif sent[0][2] == NO_LABEL or sent[0][3] == NO_LABEL:
+            for w in sent:
+                assert w[1] != NO_LABEL and w[2] == NO_LABEL and w[3] == NO_LABEL
+            has_syn = False
+        sent += [has_tag, has_syn]
+    return data
+
+
 class DataLoader:
     def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False, pretrain_restrict_to_train_vocab=False):
         self.batch_size = batch_size
@@ -33,30 +49,49 @@ class DataLoader:
             doc = input_src
             self.conll, data = self.load_doc(doc)
 
-        # handle vocab
-        if vocab is None:
-            self.vocab = self.init_vocab([sent[:-2] for sent in data])  # sent: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
-        else:
-            self.vocab = vocab
-        self.pretrain_vocab = pretrain.vocab
+        self._init_aux_(args, pretrain, vocab, data)
 
-        # filter and sample data
-        if args.get('sample_train', 1.0) < 1.0 and not self.eval:
-            keep = int(args['sample_train'] * len(data))
-            data = random.sample(data, keep)
-            self.logger.info("Subsample training set with rate {:g}".format(args['sample_train']))
+        if filename is not None:
+            self.logger.info("{} batches created for {}.".format(len(self.data), filename))
+
+    def init_no_shuffle(self):
+        self._init_aux_(None, None, None, self.reload_complemented_from_combined(), preserve_order=True)
+
+    def init_with_complemented(self):
+        self._init_aux_(None, None, None, self.reload_complemented_from_combined())
+
+    def _init_aux_(self, args, pretrain, vocab, data, preserve_order=False):
+        if preserve_order:
+            self.shuffled = False
+        else:
+            self.shuffled = not self.eval
+
+        if args is None:
+            assert pretrain is None
+            assert vocab is None
+        else:
+            # handle vocab
+            if vocab is None:
+                self.vocab = self.init_vocab([sent[:-2] for sent in data])  # sent: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
+            else:
+                self.vocab = vocab
+            self.pretrain_vocab = pretrain.vocab
+
+            # filter and sample data
+            if args.get('sample_train', 1.0) < 1.0 and not self.eval:
+                keep = int(args['sample_train'] * len(data))
+                data = random.sample(data, keep)
+                self.logger.info("Subsample training set with rate {:g}".format(args['sample_train']))
 
         # before: data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
-        data = self.preprocess(data, self.vocab, self.pretrain_vocab, args)
+        data = self.preprocess(data, self.vocab, self.pretrain_vocab)
         # shuffle for training
         if self.shuffled:
             random.shuffle(data)
         self.num_examples = len(data)
 
         # chunk into batches
-        self.data = self.chunk_batches(data)
-        if filename is not None:
-            self.logger.info("{} batches created for {}.".format(len(self.data), filename))
+        self.data = self.chunk_batches(data, no_sort=preserve_order)
 
     # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel']
     def init_vocab(self, data):
@@ -90,7 +125,7 @@ class DataLoader:
 
     # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
     # Return: [word, char/(prefix, suffix), upos, pretrained, head, deprel]
-    def preprocess(self, data, vocab, pretrain_vocab, args):
+    def preprocess(self, data, vocab, pretrain_vocab):
         processed = []
         for sent in data:
             has_tag, has_syn = sent[-2:]
@@ -176,17 +211,13 @@ class DataLoader:
         else: excluded = []
         combined_file = combined.CombinedFile(filename, excluded=excluded)
         data = combined_file.get(['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], as_sentences=True)
-        for sent in data: # 1(ptbpos) or 2(ptbhead)+3(ptbdeprel) could be NO_LABEL.
-            has_tag = True
-            has_syn = True
-            if sent[0][1] == NO_LABEL:
-                for w in sent: assert w[1] == NO_LABEL and w[2] != NO_LABEL and w[3] != NO_LABEL
-                has_tag = False
-            elif sent[0][2] == NO_LABEL or sent[0][3] == NO_LABEL:
-                for w in sent: assert w[1] != NO_LABEL and w[2] == NO_LABEL and w[3] == NO_LABEL
-                has_syn = False
-            sent += [has_tag, has_syn]
+        data = check_annots(data)
         return combined_file, data
+
+    def reload_complemented_from_combined(self):
+        data = self.combined.get(['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], as_sentences=True, complemented=True)
+        data = check_annots(data)
+        return data
 
     def load_doc(self, doc):
         raise NotImplementedError  # TODO
@@ -202,14 +233,15 @@ class DataLoader:
         self.data = self.chunk_batches(data)
         random.shuffle(self.data)
 
-    def chunk_batches(self, data):
+    def chunk_batches(self, data, no_sort=False):
         res = []
 
-        if not self.eval:
-            # sort sentences (roughly) by length for better memory utilization
-            data = sorted(data, key = lambda x: len(x[0]), reverse=random.random() > .5)
-        elif self.sort_during_eval:
-            (data, ), self.data_orig_idx = sort_all([data], [len(x[0]) for x in data])
+        if not no_sort:
+            if not self.eval:
+                # sort sentences (roughly) by length for better memory utilization
+                data = sorted(data, key = lambda x: len(x[0]), reverse=random.random() > .5)
+            elif self.sort_during_eval:
+                (data, ), self.data_orig_idx = sort_all([data], [len(x[0]) for x in data])
 
         current = []
         currentlen = 0

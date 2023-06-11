@@ -70,73 +70,74 @@ class Parser(nn.Module):
         self.worddrop = WordDropout(args['word_dropout'])
 
     def forward(self, word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens):
-        def pack(x):
-            return pack_padded_sequence(x, sentlens, batch_first=True)
+        if not (self.training and ((head == NO_LABEL) or (deprel == NO_LABEL))):  # Saves time when we do not need to calculate the loss nor the preds (i.e. training but with no available supervision).
+            def pack(x):
+                return pack_padded_sequence(x, sentlens, batch_first=True)
 
-        inputs = []
-        if self.args['pretrain']:
-            pretrained_emb = self.pretrained_emb(pretrained)
-            pretrained_emb = self.trans_pretrained(pretrained_emb)
-            pretrained_emb = pack(pretrained_emb)
-            inputs += [pretrained_emb]
+            inputs = []
+            if self.args['pretrain']:
+                pretrained_emb = self.pretrained_emb(pretrained)
+                pretrained_emb = self.trans_pretrained(pretrained_emb)
+                pretrained_emb = pack(pretrained_emb)
+                inputs += [pretrained_emb]
 
-        #def pad(x):
-        #    return pad_packed_sequence(PackedSequence(x, pretrained_emb.batch_sizes), batch_first=True)[0]
+            #def pad(x):
+            #    return pad_packed_sequence(PackedSequence(x, pretrained_emb.batch_sizes), batch_first=True)[0]
 
-        if self.args['tag_emb_dim'] > 0:
-            pos_emb = self.upos_emb(upos)
-            pos_emb = pack(pos_emb)
-            inputs += [pos_emb, ]
+            if self.args['tag_emb_dim'] > 0:
+                pos_emb = self.upos_emb(upos)
+                pos_emb = pack(pos_emb)
+                inputs += [pos_emb, ]
 
-        if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
-            char_reps = self.charmodel(wordchars, wordchars_mask, word_orig_idx, sentlens, wordlens)
-            char_reps = PackedSequence(self.trans_char(self.drop(char_reps.data)), char_reps.batch_sizes)
-            inputs += [char_reps]
-        elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
-            prefixes, suffixes = wordchars
-            prefix_reps = self.prefix_emb(prefixes).sum(dim=2)
-            prefix_reps = pack(self.drop(prefix_reps))
-            inputs += [prefix_reps]
-            suffix_reps = self.suffix_emb(suffixes).sum(dim=2)
-            suffix_reps = pack(self.drop(suffix_reps))
-            inputs += [suffix_reps]
-        elif self.args['char_type'] == 'deactivated':
-            pass
-        else:
-            raise NotImplementedError
+            if self.args['char_type'] == "char" and self.args['char_emb_dim'] > 0:
+                char_reps = self.charmodel(wordchars, wordchars_mask, word_orig_idx, sentlens, wordlens)
+                char_reps = PackedSequence(self.trans_char(self.drop(char_reps.data)), char_reps.batch_sizes)
+                inputs += [char_reps]
+            elif self.args['char_type'] == "fix" and self.args['fix_emb_dim'] > 0:
+                prefixes, suffixes = wordchars
+                prefix_reps = self.prefix_emb(prefixes).sum(dim=2)
+                prefix_reps = pack(self.drop(prefix_reps))
+                inputs += [prefix_reps]
+                suffix_reps = self.suffix_emb(suffixes).sum(dim=2)
+                suffix_reps = pack(self.drop(suffix_reps))
+                inputs += [suffix_reps]
+            elif self.args['char_type'] == 'deactivated':
+                pass
+            else:
+                raise NotImplementedError
 
-        lstm_inputs = torch.cat([x.data for x in inputs], 1)
+            lstm_inputs = torch.cat([x.data for x in inputs], 1)
 
-        lstm_inputs = self.worddrop(lstm_inputs, self.drop_replacement)
-        lstm_inputs = self.drop(lstm_inputs)
+            lstm_inputs = self.worddrop(lstm_inputs, self.drop_replacement)
+            lstm_inputs = self.drop(lstm_inputs)
 
-        lstm_inputs = PackedSequence(lstm_inputs, inputs[0].batch_sizes)
+            lstm_inputs = PackedSequence(lstm_inputs, inputs[0].batch_sizes)
 
-        lstm_outputs, _ = self.parserlstm(lstm_inputs, sentlens, hx=(self.parserlstm_h_init.expand(2 * self.args['num_layers'], word.size(0), self.args['hidden_dim']).contiguous(), self.parserlstm_c_init.expand(2 * self.args['num_layers'], word.size(0), self.args['hidden_dim']).contiguous()))
-        lstm_outputs, _ = pad_packed_sequence(lstm_outputs, batch_first=True)
+            lstm_outputs, _ = self.parserlstm(lstm_inputs, sentlens, hx=(self.parserlstm_h_init.expand(2 * self.args['num_layers'], word.size(0), self.args['hidden_dim']).contiguous(), self.parserlstm_c_init.expand(2 * self.args['num_layers'], word.size(0), self.args['hidden_dim']).contiguous()))
+            lstm_outputs, _ = pad_packed_sequence(lstm_outputs, batch_first=True)
 
-        unlabeled_scores = self.unlabeled(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
-        deprel_scores = self.deprel(self.drop(lstm_outputs), self.drop(lstm_outputs))
+            unlabeled_scores = self.unlabeled(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
+            deprel_scores = self.deprel(self.drop(lstm_outputs), self.drop(lstm_outputs))
 
-        #goldmask = head.new_zeros(*head.size(), head.size(-1)+1, dtype=torch.uint8)
-        #goldmask.scatter_(2, head.unsqueeze(2), 1)
+            #goldmask = head.new_zeros(*head.size(), head.size(-1)+1, dtype=torch.uint8)
+            #goldmask.scatter_(2, head.unsqueeze(2), 1)
 
-        if self.args['linearization'] or self.args['distance']:
-            head_offset = torch.arange(word.size(1), device=head.device).view(1, 1, -1).expand(word.size(0), -1, -1) - torch.arange(word.size(1), device=head.device).view(1, -1, 1).expand(word.size(0), -1, -1)
+            if self.args['linearization'] or self.args['distance']:
+                head_offset = torch.arange(word.size(1), device=head.device).view(1, 1, -1).expand(word.size(0), -1, -1) - torch.arange(word.size(1), device=head.device).view(1, -1, 1).expand(word.size(0), -1, -1)
 
-        if self.args['linearization']:
-            lin_scores = self.linearization(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
-            unlabeled_scores += F.logsigmoid(lin_scores * torch.sign(head_offset).float()).detach()
+            if self.args['linearization']:
+                lin_scores = self.linearization(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
+                unlabeled_scores += F.logsigmoid(lin_scores * torch.sign(head_offset).float()).detach()
 
-        if self.args['distance']:
-            dist_scores = self.distance(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
-            dist_pred = 1 + F.softplus(dist_scores)
-            dist_target = torch.abs(head_offset)
-            dist_kld = -torch.log((dist_target.float() - dist_pred)**2/2 + 1)
-            unlabeled_scores += dist_kld.detach()
+            if self.args['distance']:
+                dist_scores = self.distance(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
+                dist_pred = 1 + F.softplus(dist_scores)
+                dist_target = torch.abs(head_offset)
+                dist_kld = -torch.log((dist_target.float() - dist_pred)**2/2 + 1)
+                unlabeled_scores += dist_kld.detach()
 
-        diag = torch.eye(head.size(-1)+1, dtype=torch.bool, device=head.device).unsqueeze(0)
-        unlabeled_scores.masked_fill_(diag, -float('inf'))
+            diag = torch.eye(head.size(-1)+1, dtype=torch.bool, device=head.device).unsqueeze(0)
+            unlabeled_scores.masked_fill_(diag, -float('inf'))
 
         preds = []
 

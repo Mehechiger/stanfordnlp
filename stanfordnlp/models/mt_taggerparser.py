@@ -83,6 +83,9 @@ def parse_args():
 
     parser.add_argument('--search_lr', action='store_true', help='Searches (bayesian) best lr (ignores --lr; will be ignored if --mode is predict).')
 
+    parser.add_argument('-tlcs', '--training_label_complementing_strategy', type=str, help='in case of underspecification experiments, the strategy used to complement missing labels', default=None, choices=[None, "bootstrap"])
+    parser.add_argument('-tlcgo', '--training_label_complementing_gold_observed', help='in case of underspecification experiments and when label complementing strategies are used, whether the completion process sees available gold labels', action='store_true')
+
     args = parser.parse_args()
     return args
 
@@ -242,7 +245,17 @@ def train(args):
 
         if do_break: break
 
-        train_batch.reshuffle()
+        if args['training_label_complementing_strategy'] == "bootstrap":
+            train_logger.info("Complementing labels in train set...")
+            train_preds = []
+            train_batch.init_no_shuffle()  # Reloads from memory without shuffling nor sorting in order to align sents with the complemented labels.
+            for batch in train_batch:
+                preds = trainer.predict(batch)
+                train_preds += preds
+            train_batch.combined.set_complemented_combined(['head', 'deprel', 'upos'], [y for x in train_preds for y in x])
+            train_batch.init_with_complemented()  # Reloads from memory with complemented labels and performs shuffling and sorting.
+        else:
+            train_batch.reshuffle()  # Only needed if we do not reinitialize the dataloader with complemented labels.
 
     best_eval_parser_ind, best_eval_tagger_ind = np.argmax(list(zip(*dev_score_history)), axis=1)
     best_eval_parser = best_eval_parser_ind + 1

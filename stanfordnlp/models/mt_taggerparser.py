@@ -121,17 +121,27 @@ def main():
         return evaluate(args)
 
 
-def _search_lr_aux_train_func(lr, args, q):
+#def _search_lr_aux_train_func(lr, args, q):
+#    args["lr"] = lr
+#    now = datetime.now().strftime("%y%m%d%H%M%S%f")
+#    args["save_name"] = f"lr_search_{now}"
+#    args["output_file"] = f"lr_search_{now}.conllu"
+#    res = train(args)
+#    q.put(((res[0][0], res), lr))
+def _search_lr_aux_train_func(lr, args):
+    lr = lr[0]  # RMK there's only one hparam in the space so just take it out.
     args["lr"] = lr
     now = datetime.now().strftime("%y%m%d%H%M%S%f")
     args["save_name"] = f"lr_search_{now}"
     args["output_file"] = f"lr_search_{now}.conllu"
     res = train(args)
-    q.put(((res[0][0], res), lr))
+    return res[0][0]
 
 
+#def search_lr(args):
+#    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=2, num_searches=20)
 def search_lr(args):
-    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=2, num_searches=20)
+    return lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=10)
 
 
 def train(args):

@@ -8,7 +8,6 @@ from stanfordnlp.models.common.biaffine import DeepBiaffineScorer
 from stanfordnlp.models.common.hlstm import HighwayLSTM
 from stanfordnlp.models.common.dropout import WordDropout
 from stanfordnlp.models.common.char_model import CharacterModel
-from stanfordnlp.models.common.combined import NO_LABEL
 
 
 class MTTaggerParser(nn.Module):
@@ -18,6 +17,9 @@ class MTTaggerParser(nn.Module):
         self.vocab = vocab
         self.args = args
         self.unsaved_modules = []
+
+        self.do_tagging = not self.args["no_tagging"]
+        self.do_parsing = not self.args["no_parsing"]
 
         def add_unsaved_module(name, module):
             self.unsaved_modules += [name]
@@ -52,27 +54,30 @@ class MTTaggerParser(nn.Module):
         self.lstm_h_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
         self.lstm_c_init = nn.Parameter(torch.zeros(2 * self.args['num_layers'], 1, self.args['hidden_dim']))
 
-        # classifiers
-        self.upos_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['deep_biaff_hidden_dim'])
-        self.upos_clf = nn.Linear(self.args['deep_biaff_hidden_dim'], len(vocab['upos']))
-        self.upos_clf.weight.data.zero_()
-        self.upos_clf.bias.data.zero_()
+        if self.do_tagging:
+            # tagging classifiers
+            self.upos_hid = nn.Linear(self.args['hidden_dim'] * 2, self.args['deep_biaff_hidden_dim'])
+            self.upos_clf = nn.Linear(self.args['deep_biaff_hidden_dim'], len(vocab['upos']))
+            self.upos_clf.weight.data.zero_()
+            self.upos_clf.bias.data.zero_()
 
-        self.unlabeled = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], 1, pairwise=True, dropout=args['dropout'])
-        self.deprel = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], len(vocab['deprel']), pairwise=True, dropout=args['dropout'])
-        if args['linearization']:
-            self.linearization = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], 1, pairwise=True, dropout=args['dropout'])
-        if args['distance']:
-            self.distance = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], 1, pairwise=True, dropout=args['dropout'])
+        if self.do_parsing:
+            # parsing classifiers
+            self.unlabeled = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], 1, pairwise=True, dropout=args['dropout'])
+            self.deprel = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], len(vocab['deprel']), pairwise=True, dropout=args['dropout'])
+            if args['linearization']:
+                self.linearization = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], 1, pairwise=True, dropout=args['dropout'])
+            if args['distance']:
+                self.distance = DeepBiaffineScorer(2 * self.args['hidden_dim'], 2 * self.args['hidden_dim'], self.args['deep_biaff_hidden_dim'], 1, pairwise=True, dropout=args['dropout'])
 
         # criteria
-        self.parsing_crit = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum') # ignore padding
-        self.tagging_crit = nn.CrossEntropyLoss(ignore_index=0) # ignore padding
+        if self.do_parsing: self.parsing_crit = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum') # ignore padding
+        if self.do_tagging: self.tagging_crit = nn.CrossEntropyLoss(ignore_index=0) # ignore padding
 
         self.drop = nn.Dropout(args['dropout'])
         self.worddrop = WordDropout(args['word_dropout'])
 
-    def forward(self, word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens):
+    def forward(self, word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens, has_tag, has_syn):
         def pack(x):
             return pack_padded_sequence(x, sentlens, batch_first=True)
 
@@ -110,28 +115,29 @@ class MTTaggerParser(nn.Module):
 
         lstm_outputs, _ = self.lstm(lstm_inputs, sentlens, hx=(self.lstm_h_init.expand(2 * self.args['num_layers'], word.size(0), self.args['hidden_dim']).contiguous(), self.lstm_c_init.expand(2 * self.args['num_layers'], word.size(0), self.args['hidden_dim']).contiguous()))
 
-        # Tagging
-        lstm_outputs_tagger = lstm_outputs.data
+        if self.do_tagging:
+            # Tagging
+            lstm_outputs_tagger = lstm_outputs.data
 
-        if not (self.training and (upos == NO_LABEL)):  # Saves time when we do not need to calculate the loss nor the preds (i.e. training but with no available supervision).
             upos_hid = F.relu(self.upos_hid(self.drop(lstm_outputs_tagger)))
             upos_pred = self.upos_clf(self.drop(upos_hid))
 
-        if self.training:
-            tagging_preds = []
-            if upos == NO_LABEL:  # No available tagging supervision.
-                tagging_loss = 0
-            else:
+            if self.training:
+                tagging_preds = []
+                upos = upos.masked_fill(~has_tag.to(bool).unsqueeze(1), 0)  # mask out sentences without supervision on tag
                 upos = pack(upos).data
                 tagging_loss = self.tagging_crit(upos_pred.view(-1, upos_pred.size(-1)), upos.view(-1))
+            else:
+                tagging_loss = 0
+                tagging_preds = [pad(upos_pred).max(2)[1]]
         else:
             tagging_loss = 0
-            tagging_preds = [pad(upos_pred).max(2)[1]]
+            tagging_preds = None
 
-        # Parsing
-        lstm_outputs, _ = pad_packed_sequence(lstm_outputs, batch_first=True)
+        if self.do_parsing:
+            # Parsing
+            lstm_outputs, _ = pad_packed_sequence(lstm_outputs, batch_first=True)
 
-        if not (self.training and ((head == NO_LABEL) or (deprel == NO_LABEL))):  # Saves time when we do not need to calculate the loss nor the preds (i.e. training but with no available supervision).
             unlabeled_scores = self.unlabeled(self.drop(lstm_outputs), self.drop(lstm_outputs)).squeeze(3)
             deprel_scores = self.deprel(self.drop(lstm_outputs), self.drop(lstm_outputs))
 
@@ -152,21 +158,19 @@ class MTTaggerParser(nn.Module):
             diag = torch.eye(head.size(-1)+1, dtype=torch.bool, device=head.device).unsqueeze(0)
             unlabeled_scores.masked_fill_(diag, -float('inf'))
 
-        parsing_preds = []
-        if self.training:
-            if (head == NO_LABEL) or (deprel == NO_LABEL):  # No available parsing supervision.
-                assert (head == NO_LABEL) and (deprel == NO_LABEL)
-                parsing_loss = 0
-            else:
+            parsing_preds = []
+            if self.training:
                 unlabeled_scores = unlabeled_scores[:, 1:, :] # exclude attachment for the root symbol
                 unlabeled_scores = unlabeled_scores.masked_fill(word_mask.unsqueeze(1), -float('inf'))
                 unlabeled_target = head.masked_fill(word_mask[:, 1:], -1)
+                unlabeled_target = unlabeled_target.masked_fill(~has_syn.to(bool).unsqueeze(1), -1)  # mask out sentences without supervision on syntaxe
                 parsing_loss = self.parsing_crit(unlabeled_scores.contiguous().view(-1, unlabeled_scores.size(2)), unlabeled_target.view(-1))
 
                 deprel_scores = deprel_scores[:, 1:] # exclude attachment for the root symbol
                 #deprel_scores = deprel_scores.masked_select(goldmask.unsqueeze(3)).view(-1, len(self.vocab['deprel']))
                 deprel_scores = torch.gather(deprel_scores, 2, head.unsqueeze(2).unsqueeze(3).expand(-1, -1, -1, len(self.vocab['deprel']))).view(-1, len(self.vocab['deprel']))
                 deprel_target = deprel.masked_fill(word_mask[:, 1:], -1)
+                deprel_target = deprel_target.masked_fill(~has_syn.to(bool).unsqueeze(1), -1)  # mask out sentences without supervision on syntaxe
                 parsing_loss += self.parsing_crit(deprel_scores.contiguous(), deprel_target.view(-1))
 
                 if self.args['linearization']:
@@ -175,17 +179,22 @@ class MTTaggerParser(nn.Module):
                     lin_scores = torch.cat([-lin_scores.unsqueeze(1)/2, lin_scores.unsqueeze(1)/2], 1)
                     #lin_target = (head_offset[:, 1:] > 0).long().masked_select(goldmask)
                     lin_target = torch.gather((head_offset[:, 1:] > 0).long(), 2, head.unsqueeze(2))
+                    lin_target = lin_target.masked_fill(~has_syn.to(bool).unsqueeze(1).unsqueeze(2), -1)  # mask out sentences without supervision on syntaxe
                     parsing_loss += self.parsing_crit(lin_scores.contiguous(), lin_target.view(-1))
 
                 if self.args['distance']:
                     #dist_kld = dist_kld[:, 1:].masked_select(goldmask)
                     dist_kld = torch.gather(dist_kld[:, 1:], 2, head.unsqueeze(2))
+                    dist_kld = dist_kld.masked_fill(~has_syn.to(bool).unsqueeze(1).unsqueeze(2), 0)  # mask out sentences without supervision on syntaxe
                     parsing_loss -= dist_kld.sum()
 
                 parsing_loss /= word.size(0) # number of words
+            else:
+                parsing_loss = 0
+                parsing_preds.append(F.log_softmax(unlabeled_scores, 2).detach().cpu().numpy())
+                parsing_preds.append(deprel_scores.max(3)[1].detach().cpu().numpy())
         else:
             parsing_loss = 0
-            parsing_preds.append(F.log_softmax(unlabeled_scores, 2).detach().cpu().numpy())
-            parsing_preds.append(deprel_scores.max(3)[1].detach().cpu().numpy())
+            parsing_preds = None
 
         return tagging_loss + parsing_loss, tagging_preds, parsing_preds

@@ -92,8 +92,7 @@ class MultiVocab(BaseMultiVocab):
 
     @classmethod
     def load_state_dict(cls, state_dict):
-        class_dict = {'CharVocab': CharVocab,
-                'WordVocab': WordVocab}
+        class_dict = {'CharVocab': CharVocab, 'WordVocab': WordVocab, 'PrefixVocab': PrefixVocab, 'SuffixVocab': SuffixVocab}
         new = cls()
         assert '_key2class' in state_dict, "Cannot find class name mapping in state dict!"
         key2class = state_dict.pop('_key2class')

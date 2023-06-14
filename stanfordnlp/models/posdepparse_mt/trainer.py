@@ -24,7 +24,12 @@ def unpack_batch(batch, use_cuda):
     word_orig_idx = batch[9]  # word_orig_idx
     sentlens = batch[10]  # sentlens
     wordlens = batch[11]  # word_lens
-    return inputs, orig_idx, word_orig_idx, sentlens, wordlens
+    has_tag = batch[12]  # has_tag
+    has_syn = batch[13]  # has_syn
+    if use_cuda:
+        has_tag = has_tag.cuda()
+        has_syn = has_syn.cuda()
+    return inputs, orig_idx, word_orig_idx, sentlens, wordlens, has_tag, has_syn
 
 
 class Trainer(BaseTrainer):
@@ -57,7 +62,7 @@ class Trainer(BaseTrainer):
         self.logger.info(f"Number of trainable parameters: {trainable_params}")
 
     def update(self, batch, eval=False):
-        inputs, orig_idx, word_orig_idx, sentlens, wordlens = unpack_batch(batch, self.use_cuda)
+        inputs, orig_idx, word_orig_idx, sentlens, wordlens, has_tag, has_syn = unpack_batch(batch, self.use_cuda)
         word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel = inputs
 
         if eval:
@@ -65,7 +70,7 @@ class Trainer(BaseTrainer):
         else:
             self.model.train()
             self.optimizer.zero_grad()
-        loss, _, _ = self.model(word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens)
+        loss, _, _ = self.model(word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens, has_tag, has_syn)
         loss_val = loss.data.item()
         if eval:
             return loss_val
@@ -76,18 +81,36 @@ class Trainer(BaseTrainer):
         return loss_val
 
     def predict(self, batch, unsort=True):
-        inputs, orig_idx, word_orig_idx, sentlens, wordlens = unpack_batch(batch, self.use_cuda)
+        inputs, orig_idx, word_orig_idx, sentlens, wordlens, has_tag, has_syn = unpack_batch(batch, self.use_cuda)
         word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel = inputs
 
         self.model.eval()
         batch_size = word.size(0)
-        _, tagging_preds, parsing_preds = self.model(word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens)
+        _, tagging_preds, parsing_preds = self.model(word, word_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, word_orig_idx, sentlens, wordlens, has_tag, has_syn)
 
-        upos_seqs = [self.vocab['upos'].unmap(sent) for sent in tagging_preds[0].tolist()]
-        head_seqs = [chuliu_edmonds_one_root(adj[:l, :l])[1:] for adj, l in zip(parsing_preds[0], sentlens)] # remove attachment for the root
-        deprel_seqs = [self.vocab['deprel'].unmap([parsing_preds[1][i][j+1][h] for j, h in enumerate(hs)]) for i, hs in enumerate(head_seqs)]
+        if tagging_preds is not None:
+            upos_seqs = [self.vocab['upos'].unmap(sent) for sent in tagging_preds[0].tolist()]
+        if parsing_preds is not None:
+            head_seqs = [chuliu_edmonds_one_root(adj[:l, :l])[1:] for adj, l in zip(parsing_preds[0], sentlens)] # remove attachment for the root
+            deprel_seqs = [self.vocab['deprel'].unmap([parsing_preds[1][i][j+1][h] for j, h in enumerate(hs)]) for i, hs in enumerate(head_seqs)]
 
-        pred_tokens = [[[str(head_seqs[i][j]), deprel_seqs[i][j], upos_seqs[i][j+1]] for j in range(sentlens[i]-1)] for i in range(batch_size)]
+        pred_tokens = []
+        for i in range(batch_size):
+            tmp = []
+            for j in range(sentlens[i] - 1):
+                if tagging_preds is not None:
+                    upos_pred = upos_seqs[i][j+1]
+                else:
+                    upos_pred = "_"
+
+                if parsing_preds is not None:
+                    head_pred, deprel_pred = str(head_seqs[i][j]), deprel_seqs[i][j]
+                else:
+                    head_pred, deprel_pred = "_", "_"
+
+                tmp.append([head_pred, deprel_pred, upos_pred])
+            pred_tokens.append(tmp)
+
         if unsort:
             pred_tokens = utils.unsort(pred_tokens, orig_idx)
         return pred_tokens

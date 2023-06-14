@@ -31,6 +31,8 @@ class DataLoader:
     def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False, pretrain_restrict_to_train_vocab=False):
         self.batch_size = batch_size
         self.args = args
+        self.do_tagging = not args["no_tagging"]
+        self.do_parsing = not args["no_parsing"]
         self.eval = evaluation
         self.shuffled = not self.eval
         self.sort_during_eval = sort_during_eval
@@ -124,7 +126,7 @@ class DataLoader:
         return vocab
 
     # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
-    # Return: [word, char/(prefix, suffix), upos, pretrained, head, deprel]
+    # Return: [word, char/(prefix, suffix), upos, pretrained, head, deprel, has_tag, has_syn]
     def preprocess(self, data, vocab, pretrain_vocab):
         processed = []
         for sent in data:
@@ -141,16 +143,17 @@ class DataLoader:
                 processed_sent += [[None, ] * (len(sent) + 1), ]
             else:
                 raise NotImplementedError
-            if has_tag:
+            if has_tag and self.do_tagging:
                 processed_sent += [[ROOT_ID] + vocab['upos'].map([w[1] for w in sent])]  # ptbpos
             else:
                 processed_sent += [[NO_LABEL, ] * (len(sent) + 1), ]
             processed_sent += [[ROOT_ID] + pretrain_vocab.map([w[0] for w in sent], vocab if self.pretrain_restrict_to_train_vocab else None)]  # form
-            if has_syn:
+            if has_syn and self.do_parsing:
                 processed_sent += [[to_int(w[2], ignore_error=self.eval) for w in sent]]  # ptbhead
                 processed_sent += [vocab['deprel'].map([w[3] for w in sent])]  # ptbdeprel
             else:
                 processed_sent += [[NO_LABEL, ] * len(sent), [NO_LABEL, ] * len(sent)]
+            processed_sent += [has_tag, has_syn]
             processed.append(processed_sent)
         return processed
 
@@ -163,10 +166,10 @@ class DataLoader:
             raise TypeError
         if key < 0 or key >= len(self.data):
             raise IndexError
-        batch = self.data[key]  # [word, char/(prefix, suffix), upos, pretrained, head, deprel]
+        batch = self.data[key]  # [word, char/(prefix, suffix), upos, pretrained, head, deprel, has_tag, has_syn]
         batch_size = len(batch)
         batch = list(zip(*batch))
-        assert len(batch) == 6, str(batch)
+        assert len(batch) == 8, str(batch)
 
         # sort sentences by lens for easy RNN operations
         lens = [len(x) for x in batch[0]]
@@ -200,7 +203,9 @@ class DataLoader:
         sentlens = [len(x) for x in batch[0]]
         head = get_long_tensor(batch[4], batch_size)
         deprel = get_long_tensor(batch[5], batch_size)
-        return words, words_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, orig_idx, word_orig_idx, sentlens, word_lens
+        has_tag = get_long_tensor(batch[6], batch_size)
+        has_syn = get_long_tensor(batch[7], batch_size)
+        return words, words_mask, wordchars, wordchars_mask, upos, pretrained, head, deprel, orig_idx, word_orig_idx, sentlens, word_lens, has_tag, has_syn
 
     # data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel'], ..., has_tag, has_syn
     # evaluation: if True, does not load gold annotations

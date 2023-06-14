@@ -13,6 +13,8 @@ def map_to_ids(tokens, vocab):
 
 def get_long_tensor(tokens_list, batch_size, pad_id=constant.PAD_ID):
     """ Convert (list of )+ tokens to a padded LongTensor. """
+    if type(tokens_list[0]) == bool: return torch.LongTensor(tokens_list)  # has_tag or has_syn
+
     sizes = []
     x = tokens_list
     while isinstance(x[0], list):

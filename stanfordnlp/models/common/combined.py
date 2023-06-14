@@ -122,8 +122,8 @@ class CombinedFile():
     def set_conll(self, fields, contents):
         """ Set fields based on contents. If only one field (singleton list) is provided, then a list of content will be expected; otherwise a list of list of contents will be expected.
         """
-        assert isinstance(fields, list), "Must provide field names as a list."
-        assert isinstance(contents, list), "Must provide contents as a list (one item per line)."
+        assert isinstance(fields, list), f"Must provide field names as a list. {type(fields)}"
+        assert isinstance(contents, list), f"Must provide contents as a list (one item per line). {type(contents)}"
         assert len(fields) >= 1, "Must have at least one field."
         assert "topflag" not in fields, "Currently not supported!"  # TODO
         assert "pred" not in fields, "Currently not supported!"  # TODO

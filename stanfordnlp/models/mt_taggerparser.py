@@ -26,7 +26,7 @@ from stanfordnlp.models.common.pretrain import Pretrain
 from stanfordnlp.models.hyperparameter_search import lr_search
 
 
-def parse_args():
+def get_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='data/depparse', help='Root dir for saving models.')
     parser.add_argument('--wordvec_dir', type=str, default='extern_data/word2vec', help='Directory of word vectors')
@@ -42,6 +42,9 @@ def parse_args():
     parser.add_argument('--mode', default='train', choices=['train', 'predict'])
     parser.add_argument('--lang', type=str, help='Language')
     parser.add_argument('--shorthand', type=str, help="Treebank shorthand")
+
+    parser.add_argument('--no_tagging', action='store_true')
+    parser.add_argument('--no_parsing', action='store_true')
 
     parser.add_argument('--hidden_dim', type=int, default=400)
     parser.add_argument('--char_hidden_dim', type=int, default=400)
@@ -83,15 +86,19 @@ def parse_args():
 
     parser.add_argument('--search_lr', action='store_true', help='Searches (bayesian) best lr (ignores --lr; will be ignored if --mode is predict).')
 
+    parser.add_argument('--eval_verbose', action='store_true', help='Outputs all score metrics in eval mode.')
+
     parser.add_argument('-tlcs', '--training_label_complementing_strategy', type=str, help='in case of underspecification experiments, the strategy used to complement missing labels', default=None, choices=[None, "bootstrap"])
     #parser.add_argument('-tlcgo', '--training_label_complementing_gold_observed', help='in case of underspecification experiments and when label complementing strategies are used, whether the completion process sees available gold labels', action='store_true')  # TODO 1\*
 
-    args = parser.parse_args()
-    return args
+    return parser
 
 
 def main():
-    args = parse_args()
+    parser = get_arg_parser()
+    args = parser.parse_args()
+
+    assert not (args.no_tagging and args.no_parsing)
 
     if args.seed is not None:
         torch.manual_seed(args.seed)
@@ -124,7 +131,7 @@ def _search_lr_aux_train_func(lr, args, q):
 
 
 def search_lr(args):
-    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=1, num_searches=20)
+    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=2, num_searches=20)
 
 
 def train(args):
@@ -210,9 +217,16 @@ def train(args):
                     preds = trainer.predict(batch)
                     dev_preds += preds
 
-                dev_batch.combined.set_conll(['head', 'deprel', 'upos'], [y for x in dev_preds for y in x])
+                fields_to_set = []
+                if not args["no_parsing"]:
+                    fields_to_set.append(('head', 0))
+                    fields_to_set.append(('deprel', 1))
+                if not args["no_tagging"]:
+                    fields_to_set.append(('upos', 2))
+                fields_to_set, contents_to_set = zip(*fields_to_set)
+                dev_batch.combined.set_conll(list(fields_to_set), [[y[id] for id in contents_to_set] for x in dev_preds for y in x])
                 dev_batch.combined.write_conll(system_pred_file)
-                _, _, dev_score_parser, _, _, dev_score_tagger = scorer.score(system_pred_file, gold_file)
+                _, _, dev_score_parser, _, _, dev_score_tagger = scorer.score(system_pred_file, gold_file, do_parsing=not args["no_parsing"], do_tagging=not args["no_tagging"])
 
                 train_loss = train_loss / args['eval_interval'] # avg loss per batch
                 train_logger.info("step {}: train_loss = {:.6f}, dev_score_parser = {:.4f}, dev_score_tagger = {:.4f}".format(global_step, train_loss, dev_score_parser, dev_score_tagger))
@@ -319,20 +333,26 @@ def evaluate(args):
         preds = []
 
     # write to file and score
-    batch.combined.set_conll(['head', 'deprel', 'upos'], [y for x in preds for y in x])
+    fields_to_set = []
+    if not args["no_tagging"]:
+        fields_to_set.append(('upos', 2))
+    if not args["no_parsing"]:
+        fields_to_set.append(('head', 0))
+        fields_to_set.append(('deprel', 1))
+    fields_to_set, contents_to_set = zip(*fields_to_set)
+    batch.combined.set_conll(list(fields_to_set), [[y[id] for id in contents_to_set] for x in preds for y in x])
     batch.combined.write_conll(system_pred_file)
 
     if gold_file is not None:
-        _, _, score_parser, _, _, score_tagger = scorer.score(system_pred_file, gold_file)
+        las_p, las_r, las_f, upos_p, upos_r, upos_f = scorer.score(system_pred_file, gold_file, do_parsing=not args["no_parsing"], do_tagging=not args["no_tagging"])
 
         eval_logger.info(f"MT_TaggerParser {args['save_name']} score:")
-        eval_logger.info("parser {} {:.4f}".format(args['shorthand'], score_parser))
-        eval_logger.info("tagger {} {:.4f}".format(args['shorthand'], score_tagger))
-    else:
-        score_parser = None
-        score_tagger = None
+        eval_logger.info("parser {} {:.4f}".format(args['shorthand'], las_f))
+        eval_logger.info("tagger {} {:.4f}".format(args['shorthand'], upos_f))
 
-    return (score_parser, score_tagger), preds
+        return (las_p, las_r, las_f, upos_p, upos_r, upos_f), preds
+    else:
+        return (None, None, None, None, None, None), None
 
 
 if __name__ == '__main__':

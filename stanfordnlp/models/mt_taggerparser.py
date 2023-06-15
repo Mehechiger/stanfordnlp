@@ -73,7 +73,7 @@ def get_arg_parser():
     parser.add_argument('--max_steps', type=int, default=50000)
     parser.add_argument('--eval_interval', type=int, default=100)
     parser.add_argument('--fix_eval_interval', dest='adapt_eval_interval', action='store_false', help="Use fixed evaluation interval for all treebanks, otherwise by default the interval will be increased for larger treebanks.")
-    parser.add_argument('--max_steps_before_stop', type=int, default=3000)
+    parser.add_argument('--max_steps_before_stop', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=5000)
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help='Gradient clipping.')
     parser.add_argument('--log_step', type=int, default=20, help='Print log every k steps.')
@@ -114,7 +114,7 @@ def main():
 
     if args['mode'] == 'train':
         if args["search_lr"]:
-            return search_lr(args)
+            search_lr(args)
         else:
             return train(args)
     else:
@@ -141,7 +141,7 @@ def _search_lr_aux_train_func(lr, args):
 #def search_lr(args):
 #    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=2, num_searches=20)
 def search_lr(args):
-    return lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=10)
+    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=20)
 
 
 def train(args):
@@ -261,6 +261,10 @@ def train(args):
                 else:
                     do_break = True
                     break
+
+            if global_step > args['max_steps_before_stop'] and dev_score_parser < 0.5:
+                do_break = True
+                break
 
             if global_step >= args['max_steps']:
                 do_break = True

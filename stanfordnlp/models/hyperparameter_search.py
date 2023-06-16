@@ -45,13 +45,12 @@ def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, xi=0.
         x0, y0, logf = read_search_log(search_log)
 
         def callback(res):  # Callback called by skopt.gp_minimize for each point
-            if (not (x0 is None)) and (len(res.x_iters) > len(x0)):
-                step_lr = res.x_iters[-1][0]
-                step_perf = -res.func_vals[-1]
-                print(f"search step {len(res.x_iters)}/{num_searches}: lr={step_lr}\tperf={step_perf}")
+            step_lr = res.x_iters[-1][0]
+            step_perf = -res.func_vals[-1]
+            print(f"search step {len(res.x_iters)}/{num_searches}: lr={step_lr}\tperf={step_perf}")
 
-                logf.write(f"#lr={step_lr}\tperf={step_perf}\n")
-                logf.flush()
+            logf.write(f"#lr={step_lr}\tperf={step_perf}\n")
+            logf.flush()
 
             current_best_lr = res.x[0]
             current_best_perf = -res.fun
@@ -67,6 +66,7 @@ def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, xi=0.
         res = gp_minimize(func=func, dimensions=[Real(lower, upper, prior=prior), ], acq_func="gp_hedge", xi=xi, n_calls=n_calls, noise="gaussian", random_state=None, callback=callback, x0=x0, y0=y0, n_initial_points=n_initial_points)
 
         logf.close()
+        x0, y0, _ = read_search_log(search_log, read_only=True)
 
 
     print("Search completed.")

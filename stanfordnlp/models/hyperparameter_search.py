@@ -1,6 +1,4 @@
-#import time
-#import torch.multiprocessing as mp
-#import numpy as np
+import numpy as np
 import os
 from skopt import gp_minimize  #, Optimizer
 from skopt.space import Real
@@ -8,11 +6,7 @@ from skopt.space import Real
 from stanfordnlp.models.common import utils
 
 
-def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, xi=0.01):
-    utils.ensure_dir(args['save_dir'])
-    assert args['save_name'] is not None
-    search_log = '{}/{}_{}_mt_taggerparser.search.txt'.format(args['save_dir'], args['save_name'], args['shorthand'])
-
+def read_search_log(search_log, read_only=False):
     x0, y0 = [], []
 
     if os.path.isfile(search_log):
@@ -21,115 +15,82 @@ def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, xi=0.
             if line.startswith("#"):
                 lr, perf = line[1:].split("\t")
                 x0.append([eval(lr[3:]), ])
-                y0.append(eval(perf[5:]))
-        print(f"loaded points:")
-        for lr, perf in zip(x0, y0):
-            print(f"lr={lr}\tperf={perf}")
+                y0.append(-eval(perf[5:]))
+        if not read_only:
+            print(f"loaded {len(x0)} points:")
+            for x0_, y0_ in zip(x0, y0):
+                print(f"lr={x0_}\tperf={-y0_}")
         logf.close()
-        logf = open(search_log, 'a')
-    else:
+        if not read_only:
+            logf = open(search_log, 'a')
+    elif not read_only:
         logf = open(search_log, 'w')
+    else:
+        logf = None
 
     if (len(x0) == 0):
         x0, y0 = None, None
 
-    def callback(res):  # Callback called by skopt.gp_minimize for each point
-        if not ((x0 is None) or (len(res.x_iters) > len(x0))):
-            step_lr = res.x_iters[-1][0]
-            step_perf = -res.func_vals[-1]
-            print(f"search step {len(res.x_iters)}/{num_searches}: lr={step_lr}\tperf={step_perf}")
+    return x0, y0, logf
 
-            logf.write(f"#lr={step_lr}\tperf={step_perf}\n")
-            logf.flush()
 
-        current_best_lr = res.x[0]
-        current_best_perf = -res.fun
-        print(f"current best: lr={current_best_lr}\tperf={current_best_perf}")
+def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, xi=0.01):
+    utils.ensure_dir(args['save_dir'])
+    assert args['save_name'] is not None
+    search_log = '{}/{}_{}_mt_taggerparser.search.txt'.format(args['save_dir'], args['save_name'], args['shorthand'])
 
-    func = (lambda x: -f(x, args))  # Function minimised by skopt.gp_minimize.
-    res = gp_minimize(func=func, dimensions=[Real(lower, upper, prior=prior), ], acq_func="gp_hedge", xi=xi, n_calls=num_searches, noise="gaussian", random_state=None, callback=callback, x0=x0, y0=y0)
+    x0, y0, _ = read_search_log(search_log, read_only=True)
+
+    for n_calls in range(1, num_searches - len(x0) + 1):
+        x0, y0, logf = read_search_log(search_log)
+
+        def callback(res):  # Callback called by skopt.gp_minimize for each point
+            if (not (x0 is None)) and (len(res.x_iters) > len(x0)):
+                step_lr = res.x_iters[-1][0]
+                step_perf = -res.func_vals[-1]
+                print(f"search step {len(res.x_iters)}/{num_searches}: lr={step_lr}\tperf={step_perf}")
+
+                logf.write(f"#lr={step_lr}\tperf={step_perf}\n")
+                logf.flush()
+
+            current_best_lr = res.x[0]
+            current_best_perf = -res.fun
+            print(f"current best: lr={current_best_lr}\tperf={current_best_perf}")
+
+        # RMK due to the skopt implementation, the actual used n_initial_points = n_initial_points + len(x0)
+        if len(x0) < 10:
+            n_initial_points = 1 - len(x0)
+        else:
+            n_initial_points = -len(x0)
+
+        func = (lambda x: -f(x, args))  # Function minimised by skopt.gp_minimize.
+        res = gp_minimize(func=func, dimensions=[Real(lower, upper, prior=prior), ], acq_func="gp_hedge", xi=xi, n_calls=n_calls, noise="gaussian", random_state=None, callback=callback, x0=x0, y0=y0, n_initial_points=n_initial_points)
+
+        logf.close()
+
 
     print("Search completed.")
-    best_lr = res.x[0]
-    best_perf = -res.fun
+    ind = np.argmax(y0)
+    best_lr = x0[ind][0]
+    best_perf = -y0[ind]
     print(f"\tBest lr: {best_lr}")
     print(f"\tBest performance: {best_perf}")
     print()
-    logf.write(f"\tBest lr: {best_lr}\n")
-    logf.write(f"\tBest performance: {best_perf}\n")
-    logf.flush()
 
-    all_lrs = map(lambda x: x[0], res.x_iters)
-    all_perfs = map(lambda x: -x, res.func_vals)
+    all_lrs = map(lambda x: x[0], x0)
+    all_perfs = map(lambda x: -x, y0)
     print("All searches:")
     for lr, perf in zip(all_lrs, all_perfs):
         print(f"lr={lr}\tperf={perf}")
 
+    logf = open(search_log, 'r')
+    lines = logf.readlines()
     logf.close()
+    if not (lines[-2].startswith("\tBest lr: ") and lines[-1].startswith("\tBest performance: ")):
+        logf = open(search_log, 'a')
+        logf.write(f"\tBest lr: {best_lr}\n")
+        logf.write(f"\tBest performance: {best_perf}\n")
+        logf.flush()
+        logf.close()
 
     return best_lr, best_perf, all_lrs, all_perfs
-
-
-#def lr_search(f, args, lower, upper, prior="log-uniform", parallel=4, num_searches=20):
-#    optimizer = Optimizer(
-#            dimensions=[Real(lower, upper, prior=prior), ],
-#            random_state=1,
-#            base_estimator='gp'
-#            )
-#
-#    mp.set_start_method('spawn')
-#
-#    all_sampled_points = set()
-#    all_evaluated_perfs = []
-#    workers = set()
-#    num_completed_searches = 0
-#    q = mp.Queue()
-#    while num_completed_searches < num_searches:
-#        if len(workers) < parallel:
-#            # Sample points for all idle workers
-#            num_idle_workers = parallel - len(workers)
-#            sampled_points = []
-#            while len(sampled_points) < num_idle_workers:  # Continues until sampled_points contains #num_idle_workers unique values that have never been evaluated with before.
-#                sampled_points += optimizer.ask(n_points=num_idle_workers, strategy="cl_max")  # x is a list of n_points points
-#                sampled_points = list(set(sampled_point[0] for sampled_point in sampled_points).difference(all_sampled_points))  # removes duplicates
-#                sampled_points = sampled_points[:parallel]
-#            all_sampled_points = all_sampled_points.union(set(sampled_points))
-#
-#            # Distribute and evaluate the sampled points over the workers
-#            for sampled_point in sampled_points:
-#                worker = mp.Process(target=f, args=(sampled_point, args, q))
-#                worker.start()
-#                workers.add(worker)
-#
-#            # Check if there are any ready (idle) workers
-#            for worker in workers.copy():
-#                if not worker.is_alive():
-#                    worker.join()
-#                    workers.remove(worker)
-#                    perfs, lr = q.get()
-#                    all_evaluated_perfs.append(perfs)
-#                    optimizer.tell([lr, ], perfs[0])  # optimizes using the main perf
-#                    num_completed_searches += 1
-#
-#            if len(optimizer.yi) > 0:
-#                max_i = np.argmax(optimizer.yi)
-#                print("current best lr %s, main perf %s, perfs\n%s" % (optimizer.Xi[max_i], optimizer.yi[max_i], all_evaluated_perfs[max_i]))  # current best lr, main perf and perfs
-#        else:
-#            # Wait two seconds, so the while-condition isn't checked constantly
-#            time.sleep(2)
-#
-#            # Check if there are any ready (idle) workers
-#            for worker in workers.copy():
-#                if not worker.is_alive():
-#                    worker.join()
-#                    workers.remove(worker)
-#                    perfs, lr = q.get()
-#                    all_evaluated_perfs.append(perfs)
-#                    optimizer.tell([lr, ], perfs[0])  # optimizes using the main perf
-#                    num_completed_searches += 1
-#
-#    max_i = np.argmax(optimizer.yi)
-#    all_lrs = list(zip(optimizer.Xi, optimizer.yi, all_evaluated_perfs))
-#    best_lr, best_main_perf, best_perfs = all_lrs[max_i]
-#    print("Search ended.\nAll evaluated lrs\n%s\n\nBest lr %s, main perf %s, perfs\n%s" % (all_lrs, best_lr, best_main_perf, best_perfs))
-#    return best_lr, best_main_perf, best_perfs

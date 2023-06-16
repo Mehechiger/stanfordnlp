@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -127,6 +128,8 @@ class MTTaggerParser(nn.Module):
                 upos = upos.masked_fill(~has_tag.to(bool).unsqueeze(1), 0)  # mask out sentences without supervision on tag
                 upos = pack(upos).data
                 tagging_loss = self.tagging_crit(upos_pred.view(-1, upos_pred.size(-1)), upos.view(-1))
+                if upos.sum() == 0:  # No tagging supervision for the whole batch.
+                    tagging_loss = torch.nan_to_num(tagging_loss, nan=0.0)
             else:
                 tagging_loss = 0
                 tagging_preds = [pad(upos_pred).max(2)[1]]

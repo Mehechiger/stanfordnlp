@@ -9,6 +9,7 @@ Training and evaluation for the mt_taggerparser.
 import sys
 import os
 import shutil
+import math
 import logging
 import time
 from datetime import datetime
@@ -71,9 +72,12 @@ def get_arg_parser():
     parser.add_argument('--beta2', type=float, default=0.95)
 
     parser.add_argument('--max_steps', type=int, default=50000)
-    parser.add_argument('--eval_interval', type=int, default=100)
+    parser.add_argument('--eval_interval', type=int, default=100)  # set to -1 if using --eval_freq
     parser.add_argument('--fix_eval_interval', dest='adapt_eval_interval', action='store_false', help="Use fixed evaluation interval for all treebanks, otherwise by default the interval will be increased for larger treebanks.")
-    parser.add_argument('--max_steps_before_stop', type=int, default=1000)
+    parser.add_argument('--eval_freq', type=float, default=-1)  # eval freq per epoch, not to be used with --eval_interval together (set to -1 to disable)
+    parser.add_argument('-tlci', '--training_label_complementing_interval', type=int, default=100)  # set to -1 if using --training_label_complementing_freq
+    parser.add_argument('-tlcf', '--training_label_complementing_freq', type=float, default=-1)  # set to -1 if using --training_label_complementing_interval
+    parser.add_argument('--max_steps_before_stop', type=int, default=3000)
     parser.add_argument('--batch_size', type=int, default=5000)
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help='Gradient clipping.')
     parser.add_argument('--log_step', type=int, default=20, help='Print log every k steps.')
@@ -99,6 +103,9 @@ def main():
     args = parser.parse_args()
 
     assert not (args.no_tagging and args.no_parsing)
+    assert args.eval_freq * args.eval_interval < 0
+    assert not (args.eval_freq > 0 and args.adapt_eval_interval)
+    assert args.training_label_complementing_freq * args.training_label_complementing_interval < 0
 
     if args.seed is not None:
         torch.manual_seed(args.seed)
@@ -121,13 +128,6 @@ def main():
         return evaluate(args)
 
 
-#def _search_lr_aux_train_func(lr, args, q):
-#    args["lr"] = lr
-#    now = datetime.now().strftime("%y%m%d%H%M%S%f")
-#    args["save_name"] = f"lr_search_{now}"
-#    args["output_file"] = f"lr_search_{now}.conllu"
-#    res = train(args)
-#    q.put(((res[0][0], res), lr))
 def _search_lr_aux_train_func(lr, args):
     lr = lr[0]  # RMK there's only one hparam in the space so just take it out.
     args["lr"] = lr
@@ -138,10 +138,8 @@ def _search_lr_aux_train_func(lr, args):
     return res[0][0]
 
 
-#def search_lr(args):
-#    return lr_search(_search_lr_aux_train_func, args, 0.00003, 3, parallel=2, num_searches=20)
 def search_lr(args):
-    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=20)
+    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=5)
 
 
 def train(args):
@@ -188,6 +186,9 @@ def train(args):
     if len(train_batch) == 0 or len(dev_batch) == 0:
         train_logger.error("Skip training because no data available...")
         sys.exit(0)
+
+    if args['eval_freq'] > 0: args['eval_interval'] = len(train_batch) // args['eval_freq']
+    if args['training_label_complementing_freq'] > 0: args['training_label_complementing_interval'] = len(train_batch) // args['training_label_complementing_freq']
 
     train_logger.info("Training mt_taggerparser...")
     trainer = Trainer(args=args, vocab=vocab, pretrain=pretrain, use_cuda=args['cuda'])
@@ -238,7 +239,7 @@ def train(args):
                 dev_batch.combined.write_conll(system_pred_file)
                 _, _, dev_score_parser, _, _, dev_score_tagger = scorer.score(system_pred_file, gold_file, do_parsing=not args["no_parsing"], do_tagging=not args["no_tagging"])
 
-                train_loss = train_loss / args['eval_interval'] # avg loss per batch
+                train_loss = train_loss / args['eval_interval']  # avg loss per batch
                 train_logger.info("step {}: train_loss = {:.6f}, dev_score_parser = {:.4f}, dev_score_tagger = {:.4f}".format(global_step, train_loss, dev_score_parser, dev_score_tagger))
                 train_loss = 0
 
@@ -252,7 +253,18 @@ def train(args):
                 dev_score_history += [(dev_score_parser, dev_score_tagger)]
                 train_logger.info("")
 
+            if args['training_label_complementing_strategy'] == "bootstrap" and global_step % args['training_label_complementing_interval'] == 0:
+                train_logger.info("Complementing labels in train set...")
+                train_preds = []
+                train_batch.init_no_shuffle()  # Reloads from memory without shuffling nor sorting in order to align sents with the complemented labels.
+                for batch in train_batch:
+                    preds = trainer.predict(batch)
+                    train_preds += preds
+                train_batch.combined.set_complemented_combined(['head', 'deprel', 'upos'], [y for x in train_preds for y in x])
+                train_batch.init_with_complemented()  # Reloads from memory with complemented labels and performs shuffling and sorting.
+
             if global_step - last_best_step >= args['max_steps_before_stop']:
+                print(f"No increase in performance in {args['max_steps_before_stop']} steps")
                 if not using_amsgrad:
                     train_logger.info("Switching to AMSGrad")
                     last_best_step = global_step
@@ -262,27 +274,19 @@ def train(args):
                     do_break = True
                     break
 
-            if global_step > args['max_steps_before_stop'] and dev_score_parser < 0.5:
+            if global_step > args['max_steps_before_stop'] and 'dev_score_parser' in locals() and dev_score_parser < 0.5:
+                print(f"Performance below 0.5 in {args['max_steps_before_stop']} steps, the model doesn't learn!")
                 do_break = True
                 break
 
             if global_step >= args['max_steps']:
+                print("Max steps reached")
                 do_break = True
                 break
 
         if do_break: break
 
-        if args['training_label_complementing_strategy'] == "bootstrap":
-            train_logger.info("Complementing labels in train set...")
-            train_preds = []
-            train_batch.init_no_shuffle()  # Reloads from memory without shuffling nor sorting in order to align sents with the complemented labels.
-            for batch in train_batch:
-                preds = trainer.predict(batch)
-                train_preds += preds
-            train_batch.combined.set_complemented_combined(['head', 'deprel', 'upos'], [y for x in train_preds for y in x])
-            train_batch.init_with_complemented()  # Reloads from memory with complemented labels and performs shuffling and sorting.
-        else:
-            train_batch.reshuffle()  # Only needed if we do not reinitialize the dataloader with complemented labels.
+        train_batch.reshuffle()
 
     best_eval_parser_ind, best_eval_tagger_ind = np.argmax(list(zip(*dev_score_history)), axis=1)
     best_eval_parser = best_eval_parser_ind + 1

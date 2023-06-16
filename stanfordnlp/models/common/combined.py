@@ -73,7 +73,7 @@ class CombinedFile():
     @property
     def sents_complemented(self):
         if not hasattr(self, '_sents_complemented'): self._sents_complemented = self.load_combined()
-        return self._sents
+        return self._sents_complemented
 
     def __len__(self):
         return len(self.sents)

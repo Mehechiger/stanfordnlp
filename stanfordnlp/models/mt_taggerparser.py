@@ -12,7 +12,7 @@ import shutil
 import math
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import argparse
 import numpy as np
 import random
@@ -139,7 +139,7 @@ def _search_lr_aux_train_func(lr, args):
 
 
 def search_lr(args):
-    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=5)
+    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=20)
 
 
 def train(args):
@@ -264,7 +264,7 @@ def train(args):
                 train_batch.init_with_complemented()  # Reloads from memory with complemented labels and performs shuffling and sorting.
 
             if global_step - last_best_step >= args['max_steps_before_stop']:
-                print(f"No increase in performance in {args['max_steps_before_stop']} steps")
+                train_logger.info(f"No increase in performance in {args['max_steps_before_stop']} steps")
                 if not using_amsgrad:
                     train_logger.info("Switching to AMSGrad")
                     last_best_step = global_step
@@ -275,12 +275,12 @@ def train(args):
                     break
 
             if global_step > args['max_steps_before_stop'] and 'dev_score_parser' in locals() and dev_score_parser < 0.5:
-                print(f"Performance below 0.5 in {args['max_steps_before_stop']} steps, the model doesn't learn!")
+                train_logger.info(f"Performance below 0.5 in {args['max_steps_before_stop']} steps, the model doesn't learn!")
                 do_break = True
                 break
 
             if global_step >= args['max_steps']:
-                print("Max steps reached")
+                train_logger.info("Max steps reached")
                 do_break = True
                 break
 
@@ -288,12 +288,13 @@ def train(args):
 
         train_batch.reshuffle()
 
+    global_end_time = time.time()
     best_eval_parser_ind, best_eval_tagger_ind = np.argmax(list(zip(*dev_score_history)), axis=1)
     best_eval_parser = best_eval_parser_ind + 1
     best_eval_tagger = best_eval_tagger_ind + 1
     best_f_parser, best_f_parser_on_tagging = dev_score_history[best_eval_parser_ind]
     best_f_tagger_on_parsing, best_f_tagger = dev_score_history[best_eval_tagger_ind]
-    train_logger.info("Training ended with {} steps.".format(global_step))
+    train_logger.info(f"Training ended with {global_step} steps, duration {timedelta(seconds=global_end_time-global_start_time)}.")
     train_logger.info("Best dev F1 parser = {:.4f}, at iteration = {}, on tagging = {:.4f}".format(best_f_parser, best_eval_parser * args['eval_interval'], best_f_parser_on_tagging))
     train_logger.info("Best dev F1 tagger = {:.4f}, at iteration = {}, on parsing = {:.4f}".format(best_f_tagger, best_eval_tagger * args['eval_interval'], best_f_tagger_on_parsing))
 

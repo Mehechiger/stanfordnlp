@@ -34,7 +34,7 @@ def read_search_log(search_log, read_only=False):
     return x0, y0, logf
 
 
-def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, xi=0.01):
+def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, n_initial_points=10, xi=0.01):
     utils.ensure_dir(args['save_dir'])
     assert args['save_name'] is not None
     search_log = '{}/{}_{}_mt_taggerparser.search.txt'.format(args['save_dir'], args['save_name'], args['shorthand'])

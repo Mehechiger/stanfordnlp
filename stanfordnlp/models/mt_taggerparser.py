@@ -18,6 +18,7 @@ import numpy as np
 import random
 import torch
 from torch import nn, optim
+from tqdm import tqdm
 
 from stanfordnlp.models.posdepparse_mt.data import DataLoader
 from stanfordnlp.models.posdepparse_mt.trainer import Trainer
@@ -139,7 +140,7 @@ def _search_lr_aux_train_func(lr, args):
 
 
 def search_lr(args):
-    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=20)
+    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=60, n_initial_points=30)
 
 
 def train(args):
@@ -257,7 +258,7 @@ def train(args):
                 train_logger.info("Complementing labels in train set...")
                 train_preds = []
                 train_batch.init_no_shuffle()  # Reloads from memory without shuffling nor sorting in order to align sents with the complemented labels.
-                for batch in train_batch:
+                for batch in tqdm(train_batch):
                     preds = trainer.predict(batch)
                     train_preds += preds
                 train_batch.combined.set_complemented_combined(['head', 'deprel', 'upos'], [y for x in train_preds for y in x])

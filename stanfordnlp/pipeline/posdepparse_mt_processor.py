@@ -25,9 +25,9 @@ class POSDepparseMTProcessor(UDProcessor):
 
     def process(self, doc):
         batch = DataLoader(
-            doc, self.config['batch_size'], self.config, self.pretrain, vocab=self.vocab, evaluation=True, sort_during_eval=True)
+            doc, self.config['batch_size'], self.config, self.pretrain, vocab=self.vocab, evaluation=True, sort_saving_orig_idx=True)
         preds = []
         for i, b in enumerate(batch):
             preds += self.trainer.predict(b)
-        preds = unsort(preds, batch.data_orig_idx)
+        preds = unsort(preds, batch.data_unsorted_orig_idx)
         batch.conll.set(['head', 'deprel', 'upos'], [y for x in preds for y in x])

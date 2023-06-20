@@ -18,6 +18,7 @@ import numpy as np
 import random
 import torch
 from torch import nn, optim
+from tqdm import tqdm
 
 from stanfordnlp.models.posdepparse_mt.data import DataLoader
 from stanfordnlp.models.posdepparse_mt.trainer import Trainer
@@ -140,7 +141,7 @@ def _search_lr_aux_train_func(lr, args):
 
 
 def search_lr(args):
-    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=40, n_initial_points=30)
+    lr_search(_search_lr_aux_train_func, args, 0.0003, 0.3, num_searches=60, n_initial_points=30)
 
 
 def train(args):
@@ -175,7 +176,7 @@ def train(args):
 
     # load data
     train_logger.info("Loading data with batch size {}...".format(args['batch_size']))
-    train_batch = DataLoader(args['train_file'], args['batch_size'], args, pretrain, evaluation=False, sort_during_eval=(args["training_label_complementing_strategy"] is not None))
+    train_batch = DataLoader(args['train_file'], args['batch_size'], args, pretrain, evaluation=False, sort_saving_orig_idx=(args["training_label_complementing_strategy"] is not None))
     vocab = train_batch.vocab
     dev_batch = DataLoader(args['eval_file'], args['batch_size'], args, pretrain, vocab=vocab, evaluation=True, pretrain_restrict_to_train_vocab=args['pretrain_restrict_to_train_vocab'])
 
@@ -257,10 +258,11 @@ def train(args):
             if args['training_label_complementing_strategy'] == "bootstrap" and global_step % args['training_label_complementing_interval'] == 0:
                 train_logger.info("Complementing labels in train set...")
                 train_preds = []
-                for batch in train_batch:
+                for batch in tqdm(train_batch):
                     preds = trainer.predict(batch)
                     train_preds += preds
-                train_preds = unsort(train_preds, train_batch.data_orig_idx)
+                train_preds = unsort(train_preds, train_batch.data_unsorted_orig_idx)
+                train_preds = unsort(train_preds, train_batch.data_unshuffled_orig_idx)
                 train_batch.combined.set_complemented_combined(['head', 'deprel', 'upos'], [y for x in train_preds for y in x])
                 train_batch.init_with_complemented()  # Reloads from memory with complemented labels and performs shuffling and sorting.
 

@@ -6,7 +6,7 @@ from stanfordnlp.models.common.data import map_to_ids, get_long_tensor, get_floa
 from stanfordnlp.models.common import combined
 from stanfordnlp.models.common.vocab import PAD_ID, VOCAB_PREFIX, ROOT_ID
 from stanfordnlp.models.common.combined import NO_LABEL
-from stanfordnlp.models.common.utils import get_prefixes, get_suffixes
+from stanfordnlp.models.common.utils import get_prefixes, get_suffixes, unsort
 from stanfordnlp.models.pos.vocab import CharVocab, PrefixVocab, SuffixVocab, WordVocab, MultiVocab
 from stanfordnlp.pipeline.doc import Document
 
@@ -28,14 +28,14 @@ def check_annots(data):
 
 
 class DataLoader:
-    def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_during_eval=False, pretrain_restrict_to_train_vocab=False):
+    def __init__(self, input_src, batch_size, args, pretrain, vocab=None, evaluation=False, sort_saving_orig_idx=False, pretrain_restrict_to_train_vocab=False):
         self.batch_size = batch_size
         self.args = args
         self.do_tagging = not args["no_tagging"]
         self.do_parsing = not args["no_parsing"]
         self.eval = evaluation
         self.shuffled = not self.eval
-        self.sort_during_eval = sort_during_eval
+        self.sort_saving_orig_idx = sort_saving_orig_idx
         self.pretrain_restrict_to_train_vocab = pretrain_restrict_to_train_vocab
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.DEBUG)
@@ -56,17 +56,11 @@ class DataLoader:
         if filename is not None:
             self.logger.info("{} batches created for {}.".format(len(self.data), filename))
 
-    def init_no_shuffle(self):
-        self._init_aux_(None, None, None, self.reload_complemented_from_combined(), preserve_order=True)
-
     def init_with_complemented(self):
         self._init_aux_(None, None, None, self.reload_complemented_from_combined())
 
-    def _init_aux_(self, args, pretrain, vocab, data, preserve_order=False):
-        if preserve_order:
-            self.shuffled = False
-        else:
-            self.shuffled = not self.eval
+    def _init_aux_(self, args, pretrain, vocab, data):
+        self.shuffled = not self.eval
 
         if args is None:
             assert pretrain is None
@@ -89,11 +83,13 @@ class DataLoader:
         data = self.preprocess(data, self.vocab, self.pretrain_vocab)
         # shuffle for training
         if self.shuffled:
-            random.shuffle(data)
+            tmp = list(enumerate(data))
+            random.shuffle(tmp)
+            self.data_unshuffled_orig_idx, data = zip(*tmp)
         self.num_examples = len(data)
 
         # chunk into batches
-        self.data = self.chunk_batches(data, no_sort=preserve_order)
+        self.data = self.chunk_batches(data)
 
     # sent in data: ['form', 'ptbpos', 'ptbhead', 'ptbdeprel']
     def init_vocab(self, data):
@@ -235,18 +231,27 @@ class DataLoader:
 
     def reshuffle(self):
         data = [y for x in self.data for y in x]
-        self.data = self.chunk_batches(data)
-        random.shuffle(self.data)
 
-    def chunk_batches(self, data, no_sort=False):
+        # Restores to original order before reshuffling, otherwise we will loose track of the original indices.
+        if self.sort_saving_orig_idx:
+            data = unsort(data, self.data_unsorted_orig_idx)
+        if self.shuffled:
+            data = unsort(data, self.data_unshuffled_orig_idx)
+
+        self.data = self.chunk_batches(data)
+
+        tmp = list(enumerate(data))
+        random.shuffle(tmp)
+        self.data_unshuffled_orig_idx, data = zip(*tmp)
+
+    def chunk_batches(self, data):
         res = []
 
-        if not no_sort:
-            if not self.eval:
-                # sort sentences (roughly) by length for better memory utilization
-                data = sorted(data, key = lambda x: len(x[0]), reverse=random.random() > .5)
-            elif self.sort_during_eval:
-                (data, ), self.data_orig_idx = sort_all([data], [len(x[0]) for x in data])
+        if self.sort_saving_orig_idx:
+            (data, ), self.data_unsorted_orig_idx = sort_all([data], [len(x[0]) for x in data])
+        elif not self.eval:
+            # sort sentences (roughly) by length for better memory utilization
+            data = sorted(data, key = lambda x: len(x[0]), reverse=random.random() > .5)
 
         current = []
         currentlen = 0

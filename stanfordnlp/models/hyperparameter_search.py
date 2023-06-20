@@ -57,7 +57,7 @@ def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, n_ini
             print(f"current best: lr={current_best_lr}\tperf={current_best_perf}")
 
         # RMK due to the skopt implementation, the actual used n_initial_points = n_initial_points + len(x0)
-        if len_x0 < 10:
+        if len_x0 < n_initial_points:
             n_initial_points = 1 - len_x0
         else:
             n_initial_points = -len_x0
@@ -71,7 +71,7 @@ def lr_search(f, args, lower, upper, prior="log-uniform", num_searches=20, n_ini
     logf.close()
 
     print("Search completed.")
-    ind = np.argmax(y0)
+    ind = np.argmin(y0)  # y0s are negative
     best_lr = x0[ind][0]
     best_perf = -y0[ind]
     print(f"\tBest lr: {best_lr}")
